@@ -1,6 +1,6 @@
 # learn/test.py
 
-# ==================== 1. 核心路径补全（防止跨文件夹导入错误） ====================
+# ==================== 1. 核心路径补全（关键：防止跨文件夹导入错误） ====================
 import os
 import sys
 # 将项目根目录（LuojiaAgent）动态加入系统路径，确保能顺利导入 tools 文件夹
@@ -13,41 +13,80 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import tools_condition
 
-# 仅从 tools 包中导入编写好的课表工具
+# 导入我们的登录助手和课表工具
 from tools.courses_tool import query_whu_schedule
+from tools.login_helper import interactive_whu_login
 
-# 整合工具列表
+# 汇总工具列表
 campus_tools = [query_whu_schedule]
 
 
 # ==================== 2. 定义全局状态 (State) ====================
 class WHUState(TypedDict):
+    # 对话历史，用于累积多轮聊天数据
     messages: Annotated[Sequence[BaseMessage], add_messages]
+    # 全局会话状态：存放我们捕获到的 Cookie
     cookie_str: Optional[str]
 
 
 # ==================== 3. 初始化 LLM 并绑定工具 ====================
 llm = ChatOpenAI(
     model="deepseek-chat",
-    api_key="sk-a2f0818b178a45bd9edc4524358c4bbf", # 确保填入你的 KEY
-    base_url="https://api.deepseek.com"
+    api_key="API", # 确保填入你的 KEY
+    base_url="https://api.deepseek.com/v1"
 )
 llm_with_tools = llm.bind_tools(campus_tools)
 
 
 # ==================== 4. 定义节点 (Nodes) ====================
 
+# 节点 1：安全鉴权前置节点 (Auth Check Node)
+# learn/test.py 中的 auth_check_node 函数重构
+
+def auth_check_node(state: WHUState):
+    """图的第一步：检查并确保有可用的登录 Cookie。"""
+    print("\n--- [鉴权节点] 正在检查登录状态... ---")
+    
+    # 如果没有 Cookie，则唤起浏览器弹窗让用户登录
+    if not state.get("cookie_str"):
+        try:
+            captured_cookie = interactive_whu_login()
+            return {"cookie_str": captured_cookie}
+        except Exception as e:
+            # ==================== 核心修改：打印真实报错堆栈 ====================
+            import traceback
+            print("\n❌ 调试信息：统一身份认证登录失败，错误堆栈如下：")
+            traceback.print_exc()
+            print("==================================================\n")
+            # ===================================================================
+            
+            error_msg = AIMessage(content="系统提示：由于未能成功完成统一身份认证登录，我暂时无法为您提供课表查询服务。请重新输入问题重试。")
+            return {"messages": [error_msg]}
+            
+    return state
+
+
+# 节点 2：决策中心 (Agent Node)
+# learn/test.py 中的核心修改部分
+
+# learn/test.py 中的核心修改部分
+
 def agent_node(state: WHUState):
-    print("\n--- [Agent 节点] 大模型正在思考规划课表查询... ---")
+    print("\n--- [Agent 节点] 大模型正在规划课表查询... ---")
+    
+    last_message = state["messages"][-1] if state["messages"] else None
+    if last_message and "由于未能成功完成统一身份认证" in last_message.content:
+        return {"messages": []}
     
     # 设定系统 Prompt，实现安全的“参数注入”逻辑
-    # 明确告诉模型不需要操心 cookie_str 参数，只需要提取起止日期
+    # 告知模型只需要提取 query_date 一个参数
     system_prompt = (
         "你是一个贴心的武汉大学（智慧珞珈）校园课表助手。\n"
-        "【当前日期】：今天是 2026-07-06（星期一）。请根据今天日期为基准计算用户想查询的准确日期区间。\n"
+        "【当前日期】：今天是 2026-07-06（星期一）。请根据今天日期为基准计算用户想查询的准确日期。\n"
         "【重要指令】：\n"
         "1. 当调用 query_whu_schedule 工具时，其中的 `cookie_str` 参数你只需传入空字符串 ''，"
-        "后台会安全地自动注入真实凭证，你只需要准确提取并传入 `begin_date` 和 `end_date` 即可。\n"
+        "后台会安全地自动注入真实凭证，你只需要准确提取并传入 `query_date` 即可。\n"
+        "比如：用户问“下周二我有什么课”，下周二是 2026-07-14，你调用工具时传入 `query_date='2026-07-14'` 即可，后台工具会自动帮你计算这一周的课程。\n"
         "2. 永远不要自己编造或者向用户索要 `cookie_str`。"
     )
     
@@ -56,7 +95,7 @@ def agent_node(state: WHUState):
     return {"messages": [response]}
 
 
-# 核心逻辑：工具执行与安全凭证拦截注入
+# 节点 3：工具执行节点 (Tools Node)
 def secure_tools_node(state: WHUState):
     print("--- [工具节点] 正在安全注入 Cookie 并调用智慧珞珈 API... ---")
     
@@ -68,15 +107,13 @@ def secure_tools_node(state: WHUState):
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
-        # 仅处理 query_whu_schedule，拦截并替换 cookie_str
         if tool_name == "query_whu_schedule":
-            # 劫持参数，将保存在全局 State 中的真实 Cookie 注入到调用参数中
+            # 核心安全操作：劫持参数，将保存在全局 State 中的真实 Cookie 注入到调用参数中
             tool_args["cookie_str"] = state["cookie_str"]
             result_content = query_whu_schedule.invoke(tool_args)
         else:
             result_content = f"不支持的工具调用: {tool_name}"
             
-        # 封装为 ToolMessage 返回给状态机
         tool_msg = ToolMessage(
             content=result_content, 
             tool_call_id=tool_call["id"],
@@ -90,38 +127,61 @@ def secure_tools_node(state: WHUState):
 # ==================== 5. 编排工作流 (Graph) ====================
 workflow = StateGraph(WHUState)
 
+workflow.add_node("auth_check", auth_check_node)
 workflow.add_node("agent", agent_node)
-workflow.add_node("tools", secure_tools_node) # 注册为 "tools" 节点以适配 tools_condition
+workflow.add_node("tools", secure_tools_node)
 
-workflow.add_edge(START, "agent")
+# 设置连线：
+# 启动后首先运行 auth_check 进行登录
+workflow.add_edge(START, "auth_check")
+# 登录完毕后进入 agent 节点做决策
+workflow.add_edge("auth_check", "agent")
+# 动态判断是调用工具还是结束
 workflow.add_conditional_edges("agent", tools_condition)
+# 工具执行完后返回 agent
 workflow.add_edge("tools", "agent")
 
 app = workflow.compile()
 
 
-# ==================== 6. 本地运行测试 ====================
+# ==================== 6. 与用户进行多轮对话的交互代码 ====================
 if __name__ == "__main__":
-    # 模拟有效的智慧珞珈 Cookie（有效期内）
-    WHU_COOKIE = (
-        "PORTAL-TOKEN=eyJhbGciOiJIUzUxMiJ9.eyJQT1JUQUwtTE9HSU4tVVNFUi1LRVk6IjoiUE9SVEFMX1VTRVJfS0VZOjEwMjQtMjAyNTMwMjExNDIyMS1YeHl3QkxrVl8ifQ.MpiVyBFZAXrpnhc5h7xmpGlpYaoa77APin99Ndl2FSLSAbxZv0rkwAGnpLLwStZSpv3v4q1YqqrtUxXIbJATRw; "
-        "zhlj_authorization=c6PXO7xy6ImDNqKMHgTEa2NlcxKeS5owlM0PLC0eyCaC7sCDVYV27ZazToBj5p210Ube5W4TJCVAj8kwz1xt7PBUXbh13pjEiZ6PSicccXp6J1ArmkB5geyDdXk7QUWe; "
-        "JSESSIONID=92E83E2B5C9375F0350A6693CA513392; "
-        "route=d74fef88aa66f667f8a30f0c9e5f5fc9"
-    )
-
-    print("启动智慧珞珈 Agent 课表服务...")
+    print("==================================================")
+    print("🎓 欢迎使用“智慧珞珈”智能助手！")
+    print("提示：在对话框输入 'exit' 或 'quit' 即可退出系统。")
+    print("==================================================")
     
-    # 精准提问：下周一（2026-07-13）至下周二（2026-07-14）
-    question = "帮我看看下周一到下周二我有什么课？"
-    user_message = HumanMessage(content=question)
-    
-    inputs = {
-        "messages": [user_message],
-        "cookie_str": WHU_COOKIE
+    # 初始化全局状态变量：我们只维护一个 messages 历史和一个常驻的 cookie_str
+    state = {
+        "messages": [],
+        "cookie_str": None  # 初始为空，第一次查询时会自动拉起浏览器弹窗登录
     }
     
-    final_state = app.invoke(inputs)
-    
-    print("\n================== 智能体最终回答 ==================")
-    print(final_state["messages"][-1].content)
+    while True:
+        try:
+            # 1. 获取用户输入
+            user_input = input("\n学子说: ")
+            if user_input.strip().lower() in ["exit", "quit"]:
+                print("谢谢使用，珞珈山再见！")
+                break
+                
+            if not user_input.strip():
+                continue
+                
+            # 2. 将用户输入封装成 HumanMessage 并注入 state
+            state["messages"].append(HumanMessage(content=user_input))
+            
+            # 3. 运行图
+            # 由于 app.invoke 运行完会返回更新后的完整 State
+            # 我们直接把返回的 state 覆盖掉旧的 state，这样 Cookie 就会一直保存在内存中！
+            state = app.invoke(state)
+            
+            # 4. 获取大模型最新的一轮回答并输出
+            agent_reply = state["messages"][-1].content
+            print(f"\n助手答: {agent_reply}")
+            
+        except KeyboardInterrupt:
+            print("\n系统强行终止。")
+            break
+        except Exception as e:
+            print(f"\n发生错误: {str(e)}")
