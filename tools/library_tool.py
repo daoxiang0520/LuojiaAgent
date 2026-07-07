@@ -17,14 +17,23 @@ LIBRARY_MAPPING = {
 }
 
 @tool
-def query_library_seats(raw_cookies: list, library_token: str, library_jwt_token: str, library_hmac: str, library_request_date: str, library_request_id: str, query_date: str, library_name: str = "总馆") -> str:
+def query_library_seats(
+    raw_cookies: list, 
+    library_token: str, 
+    library_jwt_token: str, 
+    library_hmac: str, 
+    library_request_date: str, 
+    library_request_id: str, 
+    query_date: str, 
+    library_name: str = "总馆"
+) -> str:
     """查询武汉大学图书馆各个分馆在指定日期的自习室/座位空闲余量。
 
     Args:
         raw_cookies: 系统自动传入的全局多域名 Cookie 列表（用于复活浏览器会话）。
         library_token: 选座系统所需的 48位 会话 Token。
         library_jwt_token: 选座系统网页参数所需的 JWT 授权 Token。
-        library_hmac: 抓包截获的 X-hmac-request-key。
+        library_hmac: 抓包截获的 X-hmac-request-key 签名。
         library_request_date: 抓包截获的 X-request-date 时间戳。
         library_request_id: 抓包截获的 X-request-id 随机 ID。
         query_date: 需要查询的日期，格式为 'YYYY-MM-DD'，例如 '2026-07-07'。
@@ -46,13 +55,13 @@ def query_library_seats(raw_cookies: list, library_token: str, library_jwt_token
         browser = p.chromium.launch(headless=True) 
         context = browser.new_context()
         
-        # 将第一步保存的完整多域名 Cookie 列表一次性注入
+        # 将第一步保存的完整多域名 Cookie 列表一次性注入进浏览器
         context.add_cookies(raw_cookies)
         
         page = context.new_page()
         
         # 带上长密钥去加载网页，初始化网页的前端登录状态
-        target_url = f"https://seat.lib.whu.edu.cn/seat/#/login?token={library_jwt_token}"
+        target_url = f"https://seat.lib.whu.edu.cn/seat/?token={library_jwt_token}"
         try:
             page.goto(target_url, timeout=12000)
             page.wait_for_load_state("networkidle")
@@ -60,7 +69,7 @@ def query_library_seats(raw_cookies: list, library_token: str, library_jwt_token
             # 浏览器内的 API 路径
             api_path = f"/jsq/static/frontApi/res/findRoomDuration/{matched_id}/{query_date}"
             
-            # 🚀 核心修改：在 fetch 请求头中，完整、原封不动地补齐四大金刚安全请求头！
+            # 🚀 核心对齐：在 fetch 请求头中，完整、原封不动地补齐四大金刚安全请求头！
             eval_js = f"""
             async () => {{
                 const response = await fetch('{api_path}', {{
@@ -123,6 +132,7 @@ def query_library_seats(raw_cookies: list, library_token: str, library_jwt_token
             return "\n".join(cleaned_lines)
             
         except Exception as e:
+            # 调试信息打印
             print("\n❌ 自习室查询工具运行发生异常：")
             traceback.print_exc()
             print("=========================================\n")

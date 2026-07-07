@@ -1,6 +1,5 @@
-# learn/test.py
+# learn/test.py 完整终极对齐版
 
-# ==================== 1. 核心路径补全 ====================
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,43 +11,40 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import tools_condition
 
-# 导入我们的工具和一站式登录助手
 from tools.courses_tool import query_whu_schedule
 from tools.library_tool import query_library_seats
 from tools.login_helper import interactive_whu_login
 
-# 汇总工具列表
 campus_tools = [query_whu_schedule, query_library_seats]
 
-
-# ==================== 2. 定义全局状态 (State) ====================
+# ==================== 1. 定义全局状态 (State) ====================
 class WHUState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    cookie_str: Optional[str]
-    library_token: Optional[str]
-    library_jwt_token: Optional[str]
-    # 🚀 新增：保存完整的四大金刚安全请求头
+    cookie_str: Optional[str]        # 课表 Cookie
+    library_token: Optional[str]     # 48位自习室会话 Token
+    library_jwt_token: Optional[str] # 自习室 JWT 授权 Token
+    # 🚀 补齐：保存完整的安全请求头
     library_hmac: Optional[str]
     library_request_date: Optional[str]
     library_request_id: Optional[str]
-    raw_cookies: Optional[list]
+    raw_cookies: Optional[list]      # 多域名 Session Cookie 列表
 
 
-# ==================== 3. 初始化 LLM 并绑定工具 ====================
+# ==================== 2. 初始化 LLM ====================
 llm = ChatOpenAI(
     model="deepseek-chat",
-    api_key="sk-a2f0818b178a45bd9edc4524358c4bbf", # 确保填入你的 KEY
+    api_key="你的_DEEPSEEK_API_KEY", # 确保填入你的 KEY
     base_url="https://api.deepseek.com/v1"
 )
 llm_with_tools = llm.bind_tools(campus_tools)
 
 
-# ==================== 4. 定义节点 (Nodes) ====================
+# ==================== 3. 定义节点 (Nodes) ====================
 
-# 节点 1：安全鉴权前置节点 (Auth Check Node)
 def auth_check_node(state: WHUState):
     print("\n--- [鉴权节点] 正在检查登录凭证状态... ---")
     
+    # 检测到任意核心凭证缺失，强行一键收割
     if (not state.get("cookie_str") or 
         not state.get("library_token") or 
         not state.get("library_jwt_token") or 
@@ -58,6 +54,7 @@ def auth_check_node(state: WHUState):
         not state.get("raw_cookies")):
         try:
             credentials = interactive_whu_login()
+            # 🚀 修正：将收割到的 7 个参数原封不动地全部返回给状态机，绝不丢弃任何凭证
             return {
                 "cookie_str": credentials["cookie_str"],
                 "library_token": credentials["library_token"],
@@ -78,7 +75,6 @@ def auth_check_node(state: WHUState):
     return state
 
 
-# 节点 2 升级：修改提示词
 def agent_node(state: WHUState):
     print("\n--- [Agent 节点] 大模型正在思考规划多任务调度... ---")
     
@@ -102,7 +98,6 @@ def agent_node(state: WHUState):
     return {"messages": [response]}
 
 
-# 节点 3 升级：在调用工具时，完美对齐和注入这六大参数
 def secure_tools_node(state: WHUState):
     print("--- [工具节点] 正在安全注入凭证并调用校园服务 API... ---")
     
@@ -119,7 +114,7 @@ def secure_tools_node(state: WHUState):
             tool_args["cookie_str"] = state["cookie_str"]
             result_content = query_whu_schedule.invoke(tool_args)
             
-        # 场景 B：调用图书馆选座（完美注入这六大安全鉴权和 Session 复活参数）
+        # 场景 B：调用图书馆选座，注入完整的 6 大参数
         elif tool_name == "query_library_seats":
             tool_args["raw_cookies"] = state["raw_cookies"]
             tool_args["library_token"] = state["library_token"]
@@ -142,8 +137,7 @@ def secure_tools_node(state: WHUState):
     return {"messages": tool_responses}
 
 
-
-# ==================== 5. 编排工作流 (Graph) ====================
+# ==================== 4. 编排工作流 (Graph) ====================
 workflow = StateGraph(WHUState)
 
 workflow.add_node("auth_check", auth_check_node)
@@ -158,20 +152,22 @@ workflow.add_edge("tools", "agent")
 app = workflow.compile()
 
 
-# ==================== 6. 多轮交互聊天终端 ====================
-# learn/test.py 底部的运行测试配置修改
-
+# ==================== 5. 多轮交互聊天终端 ====================
 if __name__ == "__main__":
     print("==================================================")
     print("🏫 欢迎使用“智慧珞珈”多功能 Agent 智能助理！")
     print("==================================================")
     
-    # 🚀 修正 3：将初始凭证全部置为 None，强行触发 Playwright 弹窗登录
+    # 🚀 修正：在初始状态中，完整初始化这 7 个控制字段
     state = {
         "messages": [],
         "cookie_str": None,
         "library_token": None,
-        "library_hmac": None
+        "library_jwt_token": None,
+        "library_hmac": None,
+        "library_request_date": None,
+        "library_request_id": None,
+        "raw_cookies": None
     }
     
     while True:
@@ -185,8 +181,6 @@ if __name__ == "__main__":
                 continue
                 
             state["messages"].append(HumanMessage(content=user_input))
-            
-            # 运行工作流
             state = app.invoke(state)
             
             agent_reply = state["messages"][-1].content
