@@ -1,18 +1,27 @@
-# grades_demo.py
+# grades_tool.py
 
 import time
 from datetime import datetime
+from typing import Annotated  # 新增：导入类型注解
 from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState  # 新增：导入 LangGraph 注入状态标记
 
 
 @tool(description="通过浏览器打开武汉大学教务系统成绩查询页面，用户手动操作查询，程序自动抓取成绩")
-def query_whu_grades_realtime(cookie_str: str) -> str:
+def query_whu_grades_realtime(state: Annotated[dict, InjectedState]) -> str:
     """
-    仅打开成绩查询页面并注入 Cookie，不自动填写任何参数。
+    仅打开成绩查询页面并自动注入后台已保存的 Cookie，不自动填写任何参数。
     用户需在浏览器中手动选择学年学期、点击【查询】并滑动验证码。
     程序会监听成绩表格的出现，一旦加载完成即自动抓取并关闭浏览器。
     """
+    # 1. 自动从全局状态中获取之前保存的 cookie_str
+    cookie_str = state.get("cookie_str")
+
+    # 2. 安全检查：如果全局状态中没有 Cookie，说明用户还没登录
+    if not cookie_str:
+        return "【系统提示】您当前尚未登录，无法查询真实成绩。请先对我说“我要登录”来启动认证窗口。"
+
     print("\n" + "=" * 50)
     print("【智能体状态：等待用户手动查询成绩】")
     print(" 🚀 启动浏览器，载入登录凭证...")
@@ -25,6 +34,7 @@ def query_whu_grades_realtime(cookie_str: str) -> str:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
 
+        # 解析并注入 Cookie 凭证
         playwright_cookies = []
         for pair in cookie_str.split("; "):
             if "=" in pair:
@@ -98,10 +108,8 @@ def parse_grades_from_page(page):
     使用 JavaScript 一次性提取表格中的所有数据。
     返回直接是格式化后的报告字符串。
     """
-    # 执行 JavaScript 提取数据
     data = page.evaluate("""
         () => {
-            // 获取所有数据行
             const rows = document.querySelectorAll('#tabGrid .jqgrow, #tabGrid tbody tr');
             const result = {
                 items: [],
@@ -109,11 +117,10 @@ def parse_grades_from_page(page):
                 semester: ''
             };
             
-            // 过滤出有 td 的行
             let dataRows = [];
             for (let row of rows) {
                 const tds = row.querySelectorAll('td');
-                if (tds.length > 10) {  // 确保是完整的数据行
+                if (tds.length > 10) {
                     dataRows.push(tds);
                 }
             }
@@ -122,7 +129,6 @@ def parse_grades_from_page(page):
                 return result;
             }
             
-            // 遍历所有数据行，提取第一个非空的学年和学期
             for (let tds of dataRows) {
                 if (tds.length < 2) continue;
                 const year = tds[0] ? tds[0].innerText.trim() : '';
@@ -133,11 +139,9 @@ def parse_grades_from_page(page):
                 if (semester && !result.semester) {
                     result.semester = semester;
                 }
-                // 如果两个都有了，提前退出
                 if (result.year && result.semester) break;
             }
             
-            // 如果还没抓到，尝试从下拉框读取（兜底）
             if (!result.year) {
                 const yearSpan = document.querySelector('#xnxq_chosen .chosen-spanfont');
                 if (yearSpan) result.year = yearSpan.innerText.trim();
@@ -147,13 +151,10 @@ def parse_grades_from_page(page):
                 if (semSpan) result.semester = semSpan.innerText.trim();
             }
             
-            // 提取所有课程的明细
-            // 精确索引映射（根据用户提供的表格结构）：
-            // 索引3: 课程名称, 索引4: 课程性质, 索引5: 学分, 索引6: 成绩, 索引8: 绩点, 索引16: 任课教师
             for (let tds of dataRows) {
                 if (tds.length < 9) continue;
                 const courseName = tds[3] ? tds[3].innerText.trim() : '';
-                if (!courseName) continue;  // 跳过空行
+                if (!courseName) continue;
                 
                 result.items.push({
                     kcmc: courseName,
@@ -161,7 +162,7 @@ def parse_grades_from_page(page):
                     xf: tds[5] ? tds[5].innerText.trim() : '0',
                     cj: tds[6] ? tds[6].innerText.trim() : '0',
                     jd: tds[8] ? tds[8].innerText.trim() : '0',
-                    jsxm: tds[16] ? tds[16].innerText.trim() : '',  // 任课教师（索引16）
+                    jsxm: tds[16] ? tds[16].innerText.trim() : '',
                 });
             }
             
