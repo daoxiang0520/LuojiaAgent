@@ -33,7 +33,7 @@ class WHUState(TypedDict):
 # ==================== 2. 初始化 LLM ====================
 llm = ChatOpenAI(
     model="deepseek-chat",
-    api_key="sk-a2f0818b178a45bd9edc4524358c4bbf", # 确保填入你的 KEY
+    api_key="", # 确保填入你的 KEY
     base_url="https://api.deepseek.com/v1"
 )
 llm_with_tools = llm.bind_tools(campus_tools)
