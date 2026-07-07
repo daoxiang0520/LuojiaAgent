@@ -1,99 +1,110 @@
 # tools/library_tool.py
 
-import time
-import uuid
-import requests
+import traceback
+from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
 
-# ==================== 武汉大学图书馆分馆 ID 映射字典 ====================
+# 19位大楼 ID 映射
 LIBRARY_MAPPING = {
     "总馆": "1812737769937670144",
     "主馆": "1812737769937670144",
-    
     "信息分馆": "1812738485913751552",
     "信息学部分馆": "1812738485913751552",
-    
     "工学分馆": "1812738878798401536",
     "工学部分馆": "1812738878798401536",
-    
-    "医学分馆": "1812738878798401536", # 依据抓包数据暂时对齐工学部ID
+    "医学分馆": "1812738878798401536",
     "医学部分馆": "1812738878798401536"
 }
 
 @tool
-def query_library_seats(token: str, hmac_key: str, query_date: str, library_name: str = "总馆") -> str:
+def query_library_seats(raw_cookies: list, library_token: str, library_jwt_token: str, library_hmac: str, library_request_date: str, library_request_id: str, query_date: str, library_name: str = "总馆") -> str:
     """查询武汉大学图书馆各个分馆在指定日期的自习室/座位空闲余量。
 
     Args:
-        token: 选座系统所需的 Token（可从登录抓包中获取的 48位 token 字符串）。
-        hmac_key: 动态请求签名 X-hmac-request-key。
+        raw_cookies: 系统自动传入的全局多域名 Cookie 列表（用于复活浏览器会话）。
+        library_token: 选座系统所需的 48位 会话 Token。
+        library_jwt_token: 选座系统网页参数所需的 JWT 授权 Token。
+        library_hmac: 抓包截获的 X-hmac-request-key。
+        library_request_date: 抓包截获的 X-request-date 时间戳。
+        library_request_id: 抓包截获的 X-request-id 随机 ID。
         query_date: 需要查询的日期，格式为 'YYYY-MM-DD'，例如 '2026-07-07'。
         library_name: 想要查询的馆区，可选值有: '总馆', '信息分馆', '工学分馆', '医学分馆'。
     """
-    # 1. 核心：通过字典自动将中文馆名转化为真实的 19位 接口 ID
-    # 模糊匹配：如果输入含有“信息”，自动归类到信息分馆；如果没匹配到，默认查总馆
-    matched_id = "1812737769937670144" # 默认总馆ID
+    # 1. 自动对齐馆区 ID
+    matched_id = "1812737769937670144" # 默认总馆
     target_name = "总馆"
-    
     for name, b_id in LIBRARY_MAPPING.items():
         if name in library_name:
             matched_id = b_id
             target_name = name
             break
             
-    print(f"--- [自习室查询] 识别到分馆名称: '{library_name}'，自动匹配真实大楼ID: {matched_id} ---")
+    print(f"--- [自习室查询] 正在通过浏览器内核代签查询【{target_name}】{query_date} 的座位... ---")
     
-    # 2. 拼接接口 URL
-    url = f"https://seat.lib.whu.edu.cn/jsq/static/frontApi/res/findRoomDuration/{matched_id}/{query_date}"
-    
-    current_timestamp = str(int(time.time() * 1000))
-    random_uuid = str(uuid.uuid4())
-    
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "Connection": "keep-alive",
-        "Host": "seat.lib.whu.edu.cn",
-        "Origin": "https://seat.lib.whu.edu.cn",
-        "Referer": f"https://seat.lib.whu.edu.cn/seat/?token={token}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-        "token": token,
-        "X-hmac-request-key": hmac_key,
-        "X-request-date": current_timestamp,
-        "X-request-id": random_uuid,
-        "loginType": "PC"
-    }
-    
-    payload = {
-        "beginMinute": 492, # 早上 8:12 左右
-        "currentPage": 1,
-        "endMinute": 0,
-        "floorId": 0,
-        "minMinute": 0,
-        "pageSize": 12,
-        "power": False,
-        "roomType": False,
-        "sortField": "",
-        "sortType": "",
-        "windows": False
-    }
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
+    # 2. 启动一个轻量级的无头浏览器
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True) 
+        context = browser.new_context()
         
-        if response.status_code == 200:
-            res_json = response.json()
+        # 将第一步保存的完整多域名 Cookie 列表一次性注入
+        context.add_cookies(raw_cookies)
+        
+        page = context.new_page()
+        
+        # 带上长密钥去加载网页，初始化网页的前端登录状态
+        target_url = f"https://seat.lib.whu.edu.cn/seat/#/login?token={library_jwt_token}"
+        try:
+            page.goto(target_url, timeout=12000)
+            page.wait_for_load_state("networkidle")
             
+            # 浏览器内的 API 路径
+            api_path = f"/jsq/static/frontApi/res/findRoomDuration/{matched_id}/{query_date}"
+            
+            # 🚀 核心修改：在 fetch 请求头中，完整、原封不动地补齐四大金刚安全请求头！
+            eval_js = f"""
+            async () => {{
+                const response = await fetch('{api_path}', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'token': '{library_token}',
+                        'X-hmac-request-key': '{library_hmac}',
+                        'X-request-date': '{library_request_date}',
+                        'X-request-id': '{library_request_id}',
+                        'loginType': 'PC'
+                    }},
+                    body: JSON.stringify({{
+                        "beginMinute": 492,
+                        "currentPage": 1,
+                        "endMinute": 0,
+                        "floorId": 0,
+                        "minMinute": 0,
+                        "pageSize": 12,
+                        "power": false,
+                        "roomType": false,
+                        "sortField": "",
+                        "sortType": "",
+                        "windows": false
+                    }})
+                }});
+                return await response.json();
+            }}
+            """
+            
+            # 执行并获取自动签名并成功返回的 JSON 结果
+            res_json = page.evaluate(eval_js)
+            browser.close()
+            
+            # 5. 解析并清洗数据
             if not res_json.get("status"):
-                return f"【系统提示】：图书馆系统未能成功返回数据，原因：{res_json.get('message', '鉴权签名错误')}"
-            
+                return f"【系统提示】：图书馆系统未能成功返回数据，原因：{res_json.get('message', '鉴权/签名错误')}"
+                
             data_body = res_json.get("data", {})
             room_list = data_body.get("pageList", [])
             
             if not room_list:
                 return f"系统提示：在 {query_date} 未查询到【{target_name}】任何自习室余量信息。"
                 
-            # 数据清洗：提炼核心状态，剔除无效 null，压缩 Token
             cleaned_lines = []
             cleaned_lines.append(f"🏢 武汉大学图书馆【{target_name}】{query_date} 座位空闲情况：")
             
@@ -111,10 +122,10 @@ def query_library_seats(token: str, hmac_key: str, query_date: str, library_name
                 
             return "\n".join(cleaned_lines)
             
-        elif response.status_code == 401 or response.status_code == 403:
-            return "【凭证失效】：选座 Token 或 HMAC 签名已过期，请在网页端重新获取。"
-        else:
-            return f"【系统异常】：图书馆选座接口请求失败，状态码: {response.status_code}"
+        except Exception as e:
+            print("\n❌ 自习室查询工具运行发生异常：")
+            traceback.print_exc()
+            print("=========================================\n")
             
-    except Exception as e:
-        return f"【网络异常】：无法连接到图书馆选座系统，原因为: {str(e)}"
+            browser.close()
+            return f"【系统错误】：通过浏览器代签查询图书馆失败，原因为: {str(e)}"
