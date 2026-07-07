@@ -3,6 +3,10 @@
 import traceback
 from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
+from typing import Annotated
+from langgraph.prebuilt import InjectedState
+import requests
+import re
 
 # 19位大楼 ID 映射
 LIBRARY_MAPPING = {
@@ -18,14 +22,15 @@ LIBRARY_MAPPING = {
 
 @tool
 def query_library_seats(
-    raw_cookies: list, 
-    library_token: str, 
-    library_jwt_token: str, 
-    library_hmac: str, 
-    library_request_date: str, 
-    library_request_id: str, 
+    #raw_cookies: list, 
+    #library_token: str, 
+    #library_jwt_token: str, 
+    #library_hmac: str, 
+    #library_request_date: str, 
+    #library_request_id: str, 
     query_date: str, 
-    library_name: str = "总馆"
+    library_name: str,
+    state:Annotated[dict ,InjectedState]
 ) -> str:
     """查询武汉大学图书馆各个分馆在指定日期的自习室/座位空闲余量。
 
@@ -42,6 +47,7 @@ def query_library_seats(
     # 1. 自动对齐馆区 ID
     matched_id = "1812737769937670144" # 默认总馆
     target_name = "总馆"
+    raw_cookies=state.get("cookie_str")
     for name, b_id in LIBRARY_MAPPING.items():
         if name in library_name:
             matched_id = b_id
@@ -49,7 +55,25 @@ def query_library_seats(
             break
             
     print(f"--- [自习室查询] 正在通过浏览器内核代签查询【{target_name}】{query_date} 的座位... ---")
-    
+    captured_credentials = {
+            "token": ""
+        }
+
+    def handle_request(request):
+        if "frontApi" in request.url:
+            headers = request.headers
+            token = headers.get("token") or headers.get("Token")
+            hmackey=headers.get("x-hmac-request-key")
+            xdate=headers.get("x-request-date")
+            xid=headers.get("x-request-id") 
+            if token:
+                captured_credentials["token"] = token
+            if hmackey:
+                captured_credentials["hmac"] = hmackey
+            if xdate:
+                captured_credentials["xdate"] = xdate
+            if xid:
+                captured_credentials["xid"] = xid
     # 2. 启动一个轻量级的无头浏览器
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True) 
@@ -57,10 +81,27 @@ def query_library_seats(
         
         # 将第一步保存的完整多域名 Cookie 列表一次性注入进浏览器
         context.add_cookies(raw_cookies)
-        
+        page1=context.new_page()
+        page1.on("request", handle_request)
+        lib_oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
+        page1.goto(lib_oauth_url)
+        try:
+            page1.wait_for_url(lambda url: "token=" in url, timeout=15000)
+            
+            # 🚀 修复 2：使用正则表达式从当前地址中精准剥离出 JWT 长密钥，防止 urlparse 受到 #/ 干扰
+            match = re.search(r"token=([^&]+)", page1.url)
+            jwt_token = match.group(1) if match else ""
+            print(f"🎉 成功截获 JWT 授权密钥: {jwt_token[:20]}...")
+        except Exception as e:
+            print(f"警告：未能自动从 URL 提取 JWT 密钥: {str(e)}")
+            jwt_token = ""
+        library_token=captured_credentials['token']
+        library_hmac=captured_credentials['hmac']
+        library_request_date=captured_credentials['xdate']
+        library_request_id=captured_credentials['xid']
         page = context.new_page()
         # 带上长密钥去加载网页，初始化网页的前端登录状态
-        target_url = f"https://seat.lib.whu.edu.cn/seat/?token={library_jwt_token}"
+        target_url = f"https://seat.lib.whu.edu.cn/seat/?token={jwt_token}"
         try:
             page.goto(target_url, timeout=12000)
             page.wait_for_load_state("networkidle")

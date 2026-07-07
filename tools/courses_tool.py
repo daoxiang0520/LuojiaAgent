@@ -7,7 +7,7 @@ from typing import Annotated
 from langgraph.prebuilt import InjectedState
 
 @tool
-def query_whu_schedule(query_date: str,state:Anotated[dict ,InjectedState]) -> str:
+def query_whu_schedule(query_date: str,state:Annotated[dict ,InjectedState]) -> str:
     """查询武汉大学智慧珞珈系统学生在指定日期（或该日期所在周）的课表数据。
 
     Args:
