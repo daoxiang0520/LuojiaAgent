@@ -35,12 +35,6 @@ def query_library_seats(
     """查询武汉大学图书馆各个分馆在指定日期的自习室/座位空闲余量。
 
     Args:
-        raw_cookies: 系统自动传入的全局多域名 Cookie 列表（用于复活浏览器会话）。
-        library_token: 选座系统所需的 48位 会话 Token。
-        library_jwt_token: 选座系统网页参数所需的 JWT 授权 Token。
-        library_hmac: 抓包截获的 X-hmac-request-key 签名。
-        library_request_date: 抓包截获的 X-request-date 时间戳。
-        library_request_id: 抓包截获的 X-request-id 随机 ID。
         query_date: 需要查询的日期，格式为 'YYYY-MM-DD'，例如 '2026-07-07'。
         library_name: 想要查询的馆区，可选值有: '总馆', '信息分馆', '工学分馆', '医学分馆'。
     """
