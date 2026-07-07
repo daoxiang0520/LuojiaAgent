@@ -7,6 +7,7 @@ from typing import Annotated
 from langgraph.prebuilt import InjectedState
 import requests
 import re
+import time
 
 # 19位大楼 ID 映射
 LIBRARY_MAPPING = {
@@ -68,6 +69,13 @@ def query_library_seats(
                 captured_credentials["xdate"] = xdate
             if xid:
                 captured_credentials["xid"] = xid
+    for _ in range(50): # 每次等0.1秒，最多等5秒
+        if (captured_credentials.get("token") and 
+            captured_credentials.get("hmac") and 
+            captured_credentials.get("xdate") and 
+            captured_credentials.get("xid")):
+            break
+        time.sleep(0.1)
     # 2. 启动一个轻量级的无头浏览器
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True) 
@@ -75,15 +83,15 @@ def query_library_seats(
         
         # 将第一步保存的完整多域名 Cookie 列表一次性注入进浏览器
         context.add_cookies(raw_cookies)
-        page1=context.new_page()
-        page1.on("request", handle_request)
+        page=context.new_page()
+        page.on("request", handle_request)
         lib_oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
-        page1.goto(lib_oauth_url)
+        page.goto(lib_oauth_url)
         try:
-            page1.wait_for_url(lambda url: "token=" in url, timeout=15000)
+            page.wait_for_url(lambda url: "token=" in url, timeout=15000)
             
             # 🚀 修复 2：使用正则表达式从当前地址中精准剥离出 JWT 长密钥，防止 urlparse 受到 #/ 干扰
-            match = re.search(r"token=([^&]+)", page1.url)
+            match = re.search(r"token=([^&]+)", page.url)
             jwt_token = match.group(1) if match else ""
             print(f"🎉 成功截获 JWT 授权密钥: {jwt_token[:20]}...")
         except Exception as e:
@@ -93,7 +101,7 @@ def query_library_seats(
         library_hmac=captured_credentials['hmac']
         library_request_date=captured_credentials['xdate']
         library_request_id=captured_credentials['xid']
-        page = context.new_page()
+        #page = context.new_page()
         # 带上长密钥去加载网页，初始化网页的前端登录状态
         target_url = f"https://seat.lib.whu.edu.cn/seat/?token={jwt_token}"
         try:
