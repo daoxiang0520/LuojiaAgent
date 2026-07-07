@@ -3,17 +3,18 @@
 import datetime
 import requests
 from langchain_core.tools import tool
+from typing import Annotated
+from langgraph.prebuilt import InjectedState
 
 @tool
-def query_whu_schedule(cookie_str: str, query_date: str) -> str:
+def query_whu_schedule(query_date: str,state:Anotated[dict ,InjectedState]) -> str:
     """查询武汉大学智慧珞珈系统学生在指定日期（或该日期所在周）的课表数据。
 
     Args:
-        cookie_str: 登录智慧珞珈后获取的完整 Cookie 字符串（必须包含 PORTAL-TOKEN, JSESSIONID 等）。
         query_date: 需要查询的日期（或该周内的任意一天），格式为 'YYYY-MM-DD'，例如 '2026-07-06'。
     """
     url = "https://zhlj.whu.edu.cn/whdxSchedule/getScheduleData"
-    
+    cookie_str=state.get("cookie_str")
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br, zstd",
