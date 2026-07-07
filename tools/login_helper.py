@@ -51,14 +51,23 @@ def interactive_whu_login() -> dict:
             if "frontApi" in request.url:
                 headers = request.headers
                 token = headers.get("token") or headers.get("Token")
+                hmackey=headers.get("x-hmac-request-key")
+                xdate=headers.get("x-request-date")
+                xid=headers.get("x-request-id") 
                 if token:
                     captured_credentials["token"] = token
+                if hmackey:
+                    captured_credentials["hmac"] = hmackey
+                if xdate:
+                    captured_credentials["xdate"] = xdate
+                if xid:
+                    captured_credentials["xid"] = xid
 
         page.on("request", handle_request)
 
         # 3. 后台自动免密跳转到图书馆的官方 OAuth 回调接口
         print("[✔] [后台免密流转] 正在通过图书馆官方 OAuth 重定向接口同步登录状态...")
-        lib_oauth_url = "https://cas.whu.edu.cn/authserver/login?service=https%3A%2F%2Fseat.lib.whu.edu.cn%2Frem%2Fstatic%2Fsso%2FwebOAuthRed"
+        lib_oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
         page.goto(lib_oauth_url)
         
         # 🚀 修复 1：使用 Lambda 表达式作为判断器，只要 URL 中包含 "token="，立即放行（完美兼容 #/login 哈希路由）
@@ -92,5 +101,8 @@ def interactive_whu_login() -> dict:
             "cookie_str": cookie_str,
             "library_token": captured_credentials["token"],
             "library_jwt_token": jwt_token, # 导出 JWT 长密钥
-            "raw_cookies": raw_cookies
+            "raw_cookies": raw_cookies,
+            "library_hmac":captured_credentials["hmac"],
+            "library_request_date":captured_credentials["xdate"],
+            "library_request_id":captured_credentials["xid"]
         }

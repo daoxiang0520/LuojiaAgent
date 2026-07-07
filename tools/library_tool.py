@@ -59,7 +59,6 @@ def query_library_seats(
         context.add_cookies(raw_cookies)
         
         page = context.new_page()
-        
         # 带上长密钥去加载网页，初始化网页的前端登录状态
         target_url = f"https://seat.lib.whu.edu.cn/seat/?token={library_jwt_token}"
         try:
@@ -103,7 +102,7 @@ def query_library_seats(
             # 执行并获取自动签名并成功返回的 JSON 结果
             res_json = page.evaluate(eval_js)
             browser.close()
-            
+            print(res_json)
             # 5. 解析并清洗数据
             if not res_json.get("status"):
                 return f"【系统提示】：图书馆系统未能成功返回数据，原因：{res_json.get('message', '鉴权/签名错误')}"
