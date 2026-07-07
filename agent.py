@@ -1,5 +1,6 @@
 # agent.py
 import os
+from langgraph.checkpoint.memory import MemorySaver
 from typing import Annotated, Sequence
 from typing_extensions import TypedDict
 from langchain_core.messages import BaseMessage, SystemMessage
@@ -55,6 +56,7 @@ def should_continue(state: AgentState):
         return "tools"
     return END
 
+memory = MemorySaver()
 # 6. 构建图结构
 workflow = StateGraph(AgentState)
 workflow.add_node("agent", call_model)
@@ -64,7 +66,7 @@ workflow.add_edge(START, "agent")
 workflow.add_conditional_edges("agent", should_continue)
 workflow.add_edge("tools", "agent")
 
-app = workflow.compile()
+app = workflow.compile(checkpointer=memory)
 
 
 def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", password: str = ""):
