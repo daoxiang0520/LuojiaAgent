@@ -106,3 +106,33 @@ def interactive_whu_login() -> dict:
             "library_request_date":captured_credentials["xdate"],
             "library_request_id":captured_credentials["xid"]
         }
+# tools/login_helper.py (在您原有代码下方追加以下内容)
+
+from langchain_core.tools import tool, InjectedToolCallId
+from langgraph.types import Command
+from langchain_core.messages import ToolMessage
+from typing import Annotated
+
+@tool
+def login_to_whu_portal(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
+    """启动网页弹窗，引导用户进行武汉大学统一身份认证登录。
+    当系统提示未登录、登录失效、或用户显式要求“登录/身份认证”时，必须调用此工具。
+    """
+    try:
+        # 调用您写好的 Playwright 登录函数
+        cookie_str = interactive_whu_login()
+        
+        # 返回 Command 对象：同时更新全局 State 里的 cookie_str，并向大模型反馈结果
+        return Command(
+            update={
+                "cookie_str": cookie_str,
+                "messages": [ToolMessage(content="【系统消息】统一身份认证成功！已成功获取 PORTAL-TOKEN 并安全注入系统环境。", tool_call_id=tool_call_id)]
+            }
+        )
+    except Exception as e:
+        # 如果超时或失败，向大模型反馈错误信息
+        return Command(
+            update={
+                "messages": [ToolMessage(content=f"【系统消息】登录失败，原因：{str(e)}", tool_call_id=tool_call_id)]
+            }
+        )

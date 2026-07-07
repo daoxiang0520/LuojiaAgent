@@ -2,12 +2,14 @@
 
 # 1. 导入各个子模块中的工具函数
 # (请根据组员代码中实际的函数名进行修改)
+from .login_helper import login_to_whu_portal
 from .courses_tool import query_whu_schedule
 from .library_tool import query_library_seats
 from .weather_tool import get_whu_rain_forecast
 
 # 2. 统一打包成一个列表，方便 agent.py 一键导入
 ALL_TOOLS = [
+    login_to_whu_portal,
     query_whu_schedule,
     query_library_seats,
     get_whu_rain_forecast
