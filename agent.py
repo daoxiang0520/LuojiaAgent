@@ -66,6 +66,61 @@ workflow.add_edge("tools", "agent")
 
 app = workflow.compile()
 
+
+def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", password: str = ""):
+    """
+    供前端 Streamlit 循环调用的核心接口。
+    输入用户的提问，逐步产出智能体的执行状态、调用了什么工具、以及大模型的最终回答。
+    """
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "student_id": student_id,
+            "password": password
+        }
+    }
+    inputs = {"messages": [("user", user_input)]}
+    
+    # 使用同步 updates 模式逐步监听状态机的每一步节点变化
+    for chunk in app.stream(inputs, config=config, stream_mode="updates"):
+        for node_name, node_output in chunk.items():
+            if node_name == "tools":
+                # 工具节点运行完毕，获取它的返回内容
+                messages = node_output.get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    yield {
+                        "type": "tool_output",
+                        "content": f"📥 工具执行成功，返回结果：\n{last_msg.content}"
+                    }
+            elif node_name == "agent":
+                # 决策节点运行完毕
+                messages = node_output.get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    # 如果大模型作出了调用工具的决定
+                    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                        for tc in last_msg.tool_calls:
+                            # 翻译工具名给用户看，提升友好度
+                            tool_mapping = {
+                                "login_to_whu_portal": "武大统一身份认证",
+                                "query_whu_schedule": "教务课表查询",
+                                "book_school_facility": "场馆预约系统"
+                            }
+                            display_name = tool_mapping.get(tc['name'], tc['name'])
+                            yield {
+                                "type": "tool_start",
+                                "content": f"🤖 智能体判定：需要调用【{display_name}】接口..."
+                            }
+                    else:
+                        # 如果大模型没有要调用的工具，说明做出了最终回答
+                        yield {
+                            "type": "final_answer",
+                            "content": last_msg.content
+                        }
+
+
+
 # ---- 本地运行测试 ----
 if __name__ == "__main__":
     import sys
