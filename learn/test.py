@@ -1,9 +1,8 @@
 # learn/test.py
 
-# ==================== 1. 核心路径补全（关键：防止跨文件夹导入错误） ====================
 import os
 import sys
-# 将项目根目录（LuojiaAgent）动态加入系统路径，确保能顺利导入 tools 文件夹
+# 将项目根目录（LuojiaAgent）动态加入系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Annotated, Sequence, TypedDict, Optional
@@ -13,26 +12,29 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import tools_condition
 
-# 导入我们的登录助手和课表工具
+# 1. 导入课表工具和【新写好的图书馆选座工具】
 from tools.courses_tool import query_whu_schedule
-from tools.login_helper import interactive_whu_login
+from tools.library_tool import query_library_seats
 
-# 汇总工具列表
-campus_tools = [query_whu_schedule]
+# 整合工具列表：大模型现在有两个“外挂”了！
+campus_tools = [query_whu_schedule, query_library_seats]
 
 
 # ==================== 2. 定义全局状态 (State) ====================
 class WHUState(TypedDict):
-    # 对话历史，用于累积多轮聊天数据
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    # 全局会话状态：存放我们捕获到的 Cookie
+    # 存放课表 Cookie
     cookie_str: Optional[str]
+    # 存放图书馆 Token
+    library_token: Optional[str]
+    # 存放图书馆 HMAC 签名（由于是动态抓包获取，我们保存在这里）
+    library_hmac: Optional[str]
 
 
 # ==================== 3. 初始化 LLM 并绑定工具 ====================
 llm = ChatOpenAI(
     model="deepseek-chat",
-    api_key="API", # 确保填入你的 KEY
+    api_key="", # 确保填入你的 KEY
     base_url="https://api.deepseek.com/v1"
 )
 llm_with_tools = llm.bind_tools(campus_tools)
@@ -40,54 +42,25 @@ llm_with_tools = llm.bind_tools(campus_tools)
 
 # ==================== 4. 定义节点 (Nodes) ====================
 
-# 节点 1：安全鉴权前置节点 (Auth Check Node)
-# learn/test.py 中的 auth_check_node 函数重构
-
-def auth_check_node(state: WHUState):
-    """图的第一步：检查并确保有可用的登录 Cookie。"""
-    print("\n--- [鉴权节点] 正在检查登录状态... ---")
-    
-    # 如果没有 Cookie，则唤起浏览器弹窗让用户登录
-    if not state.get("cookie_str"):
-        try:
-            captured_cookie = interactive_whu_login()
-            return {"cookie_str": captured_cookie}
-        except Exception as e:
-            # ==================== 核心修改：打印真实报错堆栈 ====================
-            import traceback
-            print("\n❌ 调试信息：统一身份认证登录失败，错误堆栈如下：")
-            traceback.print_exc()
-            print("==================================================\n")
-            # ===================================================================
-            
-            error_msg = AIMessage(content="系统提示：由于未能成功完成统一身份认证登录，我暂时无法为您提供课表查询服务。请重新输入问题重试。")
-            return {"messages": [error_msg]}
-            
-    return state
-
-
-# 节点 2：决策中心 (Agent Node)
-# learn/test.py 中的核心修改部分
-
-# learn/test.py 中的核心修改部分
+# learn/test.py 中的对应 agent_node 修改
 
 def agent_node(state: WHUState):
-    print("\n--- [Agent 节点] 大模型正在规划课表查询... ---")
+    print("\n--- [Agent 节点] 大模型正在思考规划多任务调度... ---")
     
     last_message = state["messages"][-1] if state["messages"] else None
     if last_message and "由于未能成功完成统一身份认证" in last_message.content:
         return {"messages": []}
     
-    # 设定系统 Prompt，实现安全的“参数注入”逻辑
-    # 告知模型只需要提取 query_date 一个参数
+    # 设定系统 Prompt，告知大模型可以传哪些中文图书馆名称
     system_prompt = (
-        "你是一个贴心的武汉大学（智慧珞珈）校园课表助手。\n"
+        "你是一个贴心的武汉大学（智慧珞珈）校园生活助手。目前支持查询【课表】和【图书馆座位余量】。\n"
         "【当前日期】：今天是 2026-07-06（星期一）。请根据今天日期为基准计算用户想查询的准确日期。\n"
-        "【重要指令】：\n"
-        "1. 当调用 query_whu_schedule 工具时，其中的 `cookie_str` 参数你只需传入空字符串 ''，"
-        "后台会安全地自动注入真实凭证，你只需要准确提取并传入 `query_date` 即可。\n"
-        "比如：用户问“下周二我有什么课”，下周二是 2026-07-14，你调用工具时传入 `query_date='2026-07-14'` 即可，后台工具会自动帮你计算这一周的课程。\n"
-        "2. 永远不要自己编造或者向用户索要 `cookie_str`。"
+        "【工具调用指令】：\n"
+        "1. 查询课表 (query_whu_schedule)：将 `cookie_str` 传为空字符串 ''。\n"
+        "2. 查询图书馆座位 (query_library_seats)：将 `token` 和 `hmac_key` 传为空字符串 ''。\n"
+        "   - 大模型只需要提取 `query_date` 和 `library_name` 两个参数。\n"
+        "   - `library_name` 只能是：'总馆', '信息分馆', '工学分馆', '医学分馆' 之一。如果用户说“信息学部图书馆”，你传入 `library_name='信息分馆'` 即可。\n"
+        "3. 后台代码会自动注入真实的 Cookie、Token 以及复杂的 19位大楼ID 还有签名，你绝不能自己编造或向用户索要这些凭证。"
     )
     
     messages = [{"role": "system", "content": system_prompt}] + list(state["messages"])
@@ -95,9 +68,9 @@ def agent_node(state: WHUState):
     return {"messages": [response]}
 
 
-# 节点 3：工具执行节点 (Tools Node)
+# 核心安全操作：在工具执行前，自动把保存在 State 里的敏感凭证强行注入进参数中
 def secure_tools_node(state: WHUState):
-    print("--- [工具节点] 正在安全注入 Cookie 并调用智慧珞珈 API... ---")
+    print("--- [工具节点] 正在安全注入凭证并调用校园服务 API... ---")
     
     last_message = state["messages"][-1]
     tool_calls = last_message.tool_calls
@@ -107,10 +80,17 @@ def secure_tools_node(state: WHUState):
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
+        # 场景 A：调用课表
         if tool_name == "query_whu_schedule":
-            # 核心安全操作：劫持参数，将保存在全局 State 中的真实 Cookie 注入到调用参数中
             tool_args["cookie_str"] = state["cookie_str"]
             result_content = query_whu_schedule.invoke(tool_args)
+            
+        # 场景 B：调用图书馆选座（安全注入 token 和 hmac）
+        elif tool_name == "query_library_seats":
+            tool_args["token"] = state["library_token"]
+            tool_args["hmac_key"] = state["library_hmac"]
+            result_content = query_library_seats.invoke(tool_args)
+            
         else:
             result_content = f"不支持的工具调用: {tool_name}"
             
@@ -127,61 +107,39 @@ def secure_tools_node(state: WHUState):
 # ==================== 5. 编排工作流 (Graph) ====================
 workflow = StateGraph(WHUState)
 
-workflow.add_node("auth_check", auth_check_node)
 workflow.add_node("agent", agent_node)
 workflow.add_node("tools", secure_tools_node)
 
-# 设置连线：
-# 启动后首先运行 auth_check 进行登录
-workflow.add_edge(START, "auth_check")
-# 登录完毕后进入 agent 节点做决策
-workflow.add_edge("auth_check", "agent")
-# 动态判断是调用工具还是结束
+workflow.add_edge(START, "agent")
 workflow.add_conditional_edges("agent", tools_condition)
-# 工具执行完后返回 agent
 workflow.add_edge("tools", "agent")
 
 app = workflow.compile()
 
 
-# ==================== 6. 与用户进行多轮对话的交互代码 ====================
+# ==================== 6. 本地运行测试 ====================
 if __name__ == "__main__":
-    print("==================================================")
-    print("🎓 欢迎使用“智慧珞珈”智能助手！")
-    print("提示：在对话框输入 'exit' 或 'quit' 即可退出系统。")
-    print("==================================================")
+    # 模拟抓包获取的有效凭证（有效期内）
+    WHU_COOKIE = "PORTAL-TOKEN=..." # 填入你的课表 Cookie
     
-    # 初始化全局状态变量：我们只维护一个 messages 历史和一个常驻的 cookie_str
-    state = {
-        "messages": [],
-        "cookie_str": None  # 初始为空，第一次查询时会自动拉起浏览器弹窗登录
+    # 填入你抓包到的图书馆真实 Token 和 HMAC 签名
+    LIB_TOKEN = "346a90961b37ffa47dfc3da855390d85e276d5b007081214"
+    LIB_HMAC = "e8484d1a7a9cd0a684631f226d75f28eaf9efa76773228aa631ff3d31f431235"
+
+    print("启动智慧珞珈多功能 Agent 助手...")
+    
+    # 这是一个包含“多工具规划”的复杂提问
+    question = "帮我看看我明天（7月7号）有没有课？上完课我想去信息分馆自习，帮我看看明天1楼自习室位置多不多？"
+    user_message = HumanMessage(content=question)
+    
+    inputs = {
+        "messages": [user_message],
+        "cookie_str": WHU_COOKIE,
+        "library_token": LIB_TOKEN,
+        "library_hmac": LIB_HMAC
     }
     
-    while True:
-        try:
-            # 1. 获取用户输入
-            user_input = input("\n学子说: ")
-            if user_input.strip().lower() in ["exit", "quit"]:
-                print("谢谢使用，珞珈山再见！")
-                break
-                
-            if not user_input.strip():
-                continue
-                
-            # 2. 将用户输入封装成 HumanMessage 并注入 state
-            state["messages"].append(HumanMessage(content=user_input))
-            
-            # 3. 运行图
-            # 由于 app.invoke 运行完会返回更新后的完整 State
-            # 我们直接把返回的 state 覆盖掉旧的 state，这样 Cookie 就会一直保存在内存中！
-            state = app.invoke(state)
-            
-            # 4. 获取大模型最新的一轮回答并输出
-            agent_reply = state["messages"][-1].content
-            print(f"\n助手答: {agent_reply}")
-            
-        except KeyboardInterrupt:
-            print("\n系统强行终止。")
-            break
-        except Exception as e:
-            print(f"\n发生错误: {str(e)}")
+    final_state = app.invoke(inputs)
+    
+    print("\n================== 智能体最终回答 ==================")
+    print(final_state["messages"][-1].content)
