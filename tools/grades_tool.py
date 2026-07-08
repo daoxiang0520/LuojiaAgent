@@ -15,16 +15,12 @@ def query_whu_grades_realtime(state: Annotated[dict, InjectedState]) -> str:
     用户需在浏览器中手动选择学年学期、点击【查询】并滑动验证码。
     程序会监听成绩表格的出现，一旦加载完成即自动抓取并关闭浏览器。
     """
-    cookie_data = state.get("cookie_str")
-
-    # ==================== 【关键修复】正确提取教务系统 Cookie ====================
-    if isinstance(cookie_data, dict):
-        # 登录工具存入的是完整字典，成绩工具需要提取 jwgl_cookie_str
-        actual_cookie_str = cookie_data.get("jwgl_cookie_str", "")
-    else:
-        # 兼容直接传入字符串的情况（测试/降级）
-        actual_cookie_str = cookie_data
-
+    # 1. 从状态机获取分类 cookies 字典
+    cookies = state.get("cookies", {})
+    
+    # 2. 精准拿到我们在 login_helper.py 中打包好的教务 Cookie
+    actual_cookie_str = cookies.get("educational")
+    
     if not actual_cookie_str:
         return "【系统提示】未检测到有效的教务系统登录凭证（jwgl_cookie_str），请先执行 login_to_whu_portal 登录。"
 
