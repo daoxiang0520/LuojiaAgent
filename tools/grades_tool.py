@@ -2,10 +2,10 @@
 
 import time
 from datetime import datetime
-from typing import Annotated  # 新增：导入类型注解
+from typing import Annotated
 from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
-from langgraph.prebuilt import InjectedState  # 新增：导入 LangGraph 注入状态标记
+from langgraph.prebuilt import InjectedState
 
 
 @tool(description="通过浏览器打开武汉大学教务系统成绩查询页面，用户手动操作查询，程序自动抓取成绩")
@@ -15,11 +15,18 @@ def query_whu_grades_realtime(state: Annotated[dict, InjectedState]) -> str:
     用户需在浏览器中手动选择学年学期、点击【查询】并滑动验证码。
     程序会监听成绩表格的出现，一旦加载完成即自动抓取并关闭浏览器。
     """
-    cookies = state.get("cookies", {})
-    actual_cookie_str = cookies.get("educational")  # 获取教务系统 Cookie
-    # 2. 如果没拿到任何 Cookie，提前拦截，避免后面报错
+    cookie_data = state.get("cookie_str")
+
+    # ==================== 【关键修复】正确提取教务系统 Cookie ====================
+    if isinstance(cookie_data, dict):
+        # 登录工具存入的是完整字典，成绩工具需要提取 jwgl_cookie_str
+        actual_cookie_str = cookie_data.get("jwgl_cookie_str", "")
+    else:
+        # 兼容直接传入字符串的情况（测试/降级）
+        actual_cookie_str = cookie_data
+
     if not actual_cookie_str:
-        return "【系统提示】未检测到有效的登录 Cookie，请先进行登录。"
+        return "【系统提示】未检测到有效的教务系统登录凭证（jwgl_cookie_str），请先执行 login_to_whu_portal 登录。"
 
     print("\n" + "=" * 50)
     print("【智能体状态：等待用户手动查询成绩】")
@@ -33,7 +40,7 @@ def query_whu_grades_realtime(state: Annotated[dict, InjectedState]) -> str:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
 
-        # 解析并注入 Cookie 凭证
+        # 解析并注入 Cookie 凭证（只注入教务系统域名）
         playwright_cookies = []
         for pair in actual_cookie_str.split("; "):
             if "=" in pair:
@@ -237,3 +244,54 @@ def format_grade_report(items: list, year_display: str, semester_display: str) -
     report_header.append("\n明细清单:")
 
     return "\n".join(report_header + cleaned_lines)
+
+
+# ==========================================================
+# 本地测试入口
+# ==========================================================
+if __name__ == "__main__":
+    import sys
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+    print("=" * 70)
+    print("【本地测试】模拟 LangGraph state 传入字典类型的 Cookie")
+    print("=" * 70)
+
+    # ==================== 【修改这里】粘贴你的真实教务 Cookie ====================
+    test_jwgl_cookie = ""
+    # ============================================================================
+
+    print("\n⚠️ 请确保 test_jwgl_cookie 是有效的教务系统 Cookie（包含 JSESSIONID 和 SF_cookie_1）")
+    print("获取方法：运行 login_helper.py，复制输出中的 '教务系统 Cookie' 值。\n")
+
+    # 构造完整的 state 字典（与 LangGraph Agent 传入的格式一致）
+    test_state = {
+        "cookie_str": {
+            "jwgl_cookie_str": test_jwgl_cookie
+        }
+    }
+
+    print(f"当前使用的教务 Cookie 预览: {test_jwgl_cookie[:60]}...\n")
+    print("-" * 70)
+    print("开始测试成绩查询工具...\n")
+
+    try:
+        # ==================== 【正确调用方式】 ====================
+        # 使用 .invoke() 方法，传入包含 "state" 键的字典
+        result = query_whu_grades_realtime.invoke({"state": test_state})
+
+        print("\n" + "=" * 70)
+        print("📊 【查询结果】")
+        print("=" * 70)
+        print(result)
+        print("\n" + "=" * 70)
+        print("✅ 测试完成！")
+        print("=" * 70)
+
+    except Exception as e:
+        print(f"\n❌ 测试失败: {str(e)}")
+        print("\n提示：")
+        print("1. 请确保 test_jwgl_cookie 是有效的教务系统 Cookie（包含 JSESSIONID）")
+        print("2. 如果 Cookie 已过期，请重新运行 login_helper.py 获取新的 Cookie")
+        print("3. 如果仍然报错，请检查网络环境和 Playwright 是否正常安装")
