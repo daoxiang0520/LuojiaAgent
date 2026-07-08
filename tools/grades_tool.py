@@ -15,13 +15,8 @@ def query_whu_grades_realtime(state: Annotated[dict, InjectedState]) -> str:
     用户需在浏览器中手动选择学年学期、点击【查询】并滑动验证码。
     程序会监听成绩表格的出现，一旦加载完成即自动抓取并关闭浏览器。
     """
-    cookie_data = state.get("cookie_str")
-    # 1. 安全转换：判断如果是字典，就提取里面真正的 Cookie 字符串
-    if isinstance(cookie_data, dict):
-        actual_cookie_str = cookie_data.get("cookie_str", "")
-    else:
-        actual_cookie_str = cookie_data
-
+    cookies = state.get("cookies", {})
+    actual_cookie_str = cookies.get("educational")  # 获取教务系统 Cookie
     # 2. 如果没拿到任何 Cookie，提前拦截，避免后面报错
     if not actual_cookie_str:
         return "【系统提示】未检测到有效的登录 Cookie，请先进行登录。"

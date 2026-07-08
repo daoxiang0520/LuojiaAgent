@@ -42,7 +42,13 @@ def query_library_seats(
     # 1. 自动对齐馆区 ID
     matched_id = "1812737769937670144" # 默认总馆
     target_name = "总馆"
-    raw_cookies=state.get("cookie_str")
+    cookies = state.get("cookies", {})
+    raw_cookies = cookies.get("library_cookie", [])  # 提取出 Playwright 专用的 List[dict] 数组
+    
+    if not raw_cookies:
+        return "【系统提示】：未检测到有效的图书馆 Cookie 凭证，请先对我说“我要登录”。"
+
+
     for name, b_id in LIBRARY_MAPPING.items():
         if name in library_name:
             matched_id = b_id

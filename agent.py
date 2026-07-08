@@ -36,11 +36,22 @@ def get_system_date_prompt() -> str:
 
 # 导入所有统一打包的工具
 from tools import ALL_TOOLS
+class CampusCookies(TypedDict, total=False):
+    zhlj: str
+    educational: str
+    library_cookie: list  # 👈 这里必须是 list 类型，用于接收 raw_cookies
+    library_token: str
+    library_jwt_token: str
+    library_hmac: str
+    library_request_date: str
+    library_request_id: str
+
+
 
 # 1. 定义全局状态（State），新增 cookie_str 字段
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    cookie_str: str  # 【新增】用来持久化存储登录成功后的 Cookie 凭证
+    cookies: CampusCookies  # 【新增】用来持久化存储登录成功后的 Cookie 凭证
 
 # 2. 注册工具节点
 tool_node = ToolNode(ALL_TOOLS)
@@ -60,7 +71,7 @@ def call_model(state: AgentState):
     messages = state["messages"]
     
     # 检查状态中是否有 Cookie，以便在 Prompt 中动态提醒大模型当前登录状态
-    is_logged_in = "已登录" if state.get("cookie_str") else "未登录"
+    is_logged_in = "已登录" if state.get("cookies") else "未登录"
     date_anchor_prompt = get_system_date_prompt()
     
     system_prompt = SystemMessage(content=(

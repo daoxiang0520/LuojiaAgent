@@ -226,7 +226,8 @@ def interactive_whu_login() -> dict:
             "library_jwt_token": jwt_token,
             "library_hmac": captured_credentials["hmac"],
             "library_request_date": captured_credentials["xdate"],
-            "library_request_id": captured_credentials["xid"]
+            "library_request_id": captured_credentials["xid"],
+            "raw_cookies": all_cookies
         }
 
 
@@ -237,10 +238,20 @@ def interactive_whu_login() -> dict:
 def login_to_whu_portal(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     """启动网页弹窗，引导用户进行武汉大学统一身份认证登录并自动激活各端凭证。"""
     try:
-        credentials_payload = interactive_whu_login()
+        payload = interactive_whu_login()
+        cookies_dict = {
+            "zhlj": payload.get("cookie_str", ""),
+            "educational": payload.get("jwgl_cookie_str", ""),
+            "library_cookie": payload.get("raw_cookies", []),  # 注入专供 Playwright 用的 List[dict]
+            "library_token": payload.get("library_token", ""),
+            "library_jwt_token": payload.get("library_jwt_token", ""),
+            "library_hmac": payload.get("library_hmac", ""),
+            "library_request_date": payload.get("library_request_date", ""),
+            "library_request_id": payload.get("library_request_id", "")
+        }
         return Command(
             update={
-                "cookie_str": credentials_payload,
+                "cookie_str": cookies_dict,
                 "messages": [ToolMessage(
                     content="【系统消息】统一身份认证成功！已成功截获智慧珞珈、教务系统、图书馆三端凭证并注入系统环境。",
                     tool_call_id=tool_call_id

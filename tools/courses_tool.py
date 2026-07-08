@@ -14,14 +14,10 @@ def query_whu_schedule(query_date: str,state:Annotated[dict ,InjectedState]) -> 
         query_date: 需要查询的日期（或该周内的任意一天），格式为 'YYYY-MM-DD'，例如 '2026-07-06'。
     """
     url = "https://zhlj.whu.edu.cn/whdxSchedule/getScheduleData"
-    cookie_data = state.get("cookie_str")
-    # 判断拿到的数据是字典还是字符串
-    if isinstance(cookie_data, dict):
-        # 如果是字典，从中提取出真正的 cookie_str 字符串键值
-        actual_cookie = cookie_data.get("cookie_str", "")
-    else:
-        # 如果已经是字符串，直接使用
-        actual_cookie = cookie_data
+    cookies = state.get("cookies", {})
+    actual_cookie = cookies.get("educational")  # 获取教务 Cookie
+    if not actual_cookie:
+        return "【登录失效】：未检测到教务系统的有效 Cookie，请重新登录。"
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br, zstd",
