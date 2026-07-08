@@ -80,13 +80,9 @@ def query_library_seats(
     state: Annotated[dict, InjectedState] = None
 ) -> str:
     """查询武汉大学图书馆各个分馆在指定日期的自习室/座位整体空闲大盘余量。"""
-<<<<<<< HEAD
-    cookies = state.get("cookies", {})
-=======
     # 1. 安全获取新版分类 cookies 字典
     cookies = state.get("cookies", {})
     # 2. 精准拿到 Playwright 专用的 Cookie 列表
->>>>>>> c9a8641d3423e8c05d9f4bdcba29a091133cdb27
     raw_cookies = cookies.get("library_cookie", [])
     matched_id = "1812737769937670144" # 默认总馆
     target_name = "总馆"
