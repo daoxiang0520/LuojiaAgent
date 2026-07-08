@@ -1,4 +1,4 @@
-# app.py 完整修复稳定版
+# app.py 完整修复稳定版 + 流式实时渲染 + AI回复自动朗读
 import streamlit as st
 import uuid
 from typing import Generator, Dict
@@ -38,6 +38,9 @@ if "bg_index" not in st.session_state:
     st.session_state.bg_index = 0
 if "bg_opacity" not in st.session_state:
     st.session_state.bg_opacity = 0.65
+# 新增：AI回复自动朗读开关
+if "auto_read_ai" not in st.session_state:
+    st.session_state.auto_read_ai = True
 
 # 透明度滑块同步回调函数（根治回弹）
 def update_opacity():
@@ -116,16 +119,19 @@ with st.sidebar:
         help="数值越大背景越浅、越朦胧；数值越小原图色彩越清晰"
     )
     # 切换/重置背景按钮
-    col_bg1, col_bg2 = st.columns([1,1])
-    with col_bg1:
-        if st.button("切换内置背景", use_container_width=True):
-            st.session_state.bg_index = (st.session_state.bg_index + 1) % len(bg_list)
-            st.rerun()
-    with col_bg2:
-        if st.button("重置全部背景", use_container_width=True):
-            st.session_state.bg_index = 0
-            st.session_state.bg_opacity = 0.65
-            st.rerun()
+    if st.button("切换内置背景", use_container_width=True):
+        st.session_state.bg_index = (st.session_state.bg_index + 1) % len(bg_list)
+        st.rerun()
+
+    st.divider()
+    st.subheader("🔊 朗读设置")
+    # 新增自动朗读开关
+    st.checkbox(
+        "AI回复完成后自动朗读",
+        value=st.session_state.auto_read_ai,
+        key="auto_read_ai",
+        help="开启后AI回答生成完毕自动朗读全文"
+    )
 
     st.divider()
     st.subheader("💬 快捷操作")
@@ -285,32 +291,45 @@ if user_input:
                 if read_btn:
                     speak_text(user_input)
 
-    # AI流式回复
+    # ========== 增量流式实时渲染核心改动 ==========
     accumulated_answer = ""
-    try:
-        event_generator: Generator[Dict, None, None] = run_agent_stream(
-            user_input=user_input,
-            thread_id=st.session_state.thread_id,
-            student_id="",
-            password=""
-        )
-        for event in event_generator:
-            event_type = event.get("type")
-            content = event.get("content", "")
-            if event_type == "final_answer":
-                accumulated_answer = content
-    except Exception as e:
-        accumulated_answer = f"系统调用异常：{str(e)}"
-
-    # 输出AI回复气泡
+    # 创建AI气泡占位，流式逐段更新
     with chat_container:
         with st.chat_message("assistant"):
-            st.markdown(accumulated_answer)
+            response_placeholder = st.empty()
+            try:
+                event_generator: Generator[Dict, None, None] = run_agent_stream(
+                    user_input=user_input,
+                    thread_id=st.session_state.thread_id,
+                    student_id="",
+                    password=""
+                )
+                for event in event_generator:
+                    event_type = event.get("type")
+                    content = event.get("content", "")
+                    if event_type == "stream_chunk":
+                        # 增量拼接流式片段，实时刷新气泡
+                        accumulated_answer += content
+                        response_placeholder.markdown(accumulated_answer)
+                    elif event_type == "final_answer":
+                        # 完整最终回答覆盖
+                        accumulated_answer = content
+                        response_placeholder.markdown(accumulated_answer)
+            except Exception as e:
+                accumulated_answer = f"系统调用异常：{str(e)}"
+                response_placeholder.markdown(accumulated_answer)
+
+            # 渲染朗读按钮
             col_text, col_audio = st.columns([9, 1])
             with col_audio:
                 new_msg_idx = len(st.session_state.messages)
                 read_btn = st.button("🔊", key=f"read_msg_{new_msg_idx}", help="朗读本条文本")
                 if read_btn:
                     speak_text(accumulated_answer)
-    # 保存历史对话
+
+    # 保存完整AI回复到会话历史
     st.session_state.messages.append({"role": "assistant", "content": accumulated_answer})
+
+    # 自动朗读逻辑：开关开启时AI回答生成完成自动朗读
+    if st.session_state.auto_read_ai and accumulated_answer.strip():
+        speak_text(accumulated_answer)
