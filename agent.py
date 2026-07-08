@@ -8,6 +8,31 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from datetime import datetime, timezone, timedelta #时间
+def get_system_date_prompt() -> str:
+    # 1. 强制获取东八区（北京时间）
+    tz_beijing = timezone(timedelta(hours=8))
+    now = datetime.now(tz_beijing)
+    
+    # 2. 计算星期
+    weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    weekday = weekdays[now.weekday()]
+    
+    # 3. 计算明天（跨月、跨年时，大模型极易算错，我们帮它算好）
+    tomorrow = now + timedelta(days=1)
+    tomorrow_weekday = weekdays[tomorrow.weekday()]
+    
+    # 4. 组装成强力约束提示词
+    date_prompt = (
+        f"⚠️【当前系统物理时间锚点（绝对基准）】\n"
+        f"- 今天是：{now.strftime('%Y-%m-%d')} ({weekday})\n"
+        f"- 明天是：{tomorrow.strftime('%Y-%m-%d')} ({tomorrow_weekday})\n"
+        f"- 当前精准时间刻：{now.strftime('%H:%M:%S')}\n"
+        f"当用户使用“明天”、“后天”、“这周五”、“下周”等相对时间时，"
+        f"你必须以此时间锚点为基准，在脑中换算出绝对的 YYYY-MM-DD 格式，再将换算后的绝对日期作为参数传给工具。"
+        f"绝对不允许使用已经过去的年份或臆造的日期。"
+    )
+    return date_prompt
 
 # 导入所有统一打包的工具
 from tools import ALL_TOOLS
@@ -22,7 +47,6 @@ tool_node = ToolNode(ALL_TOOLS)
 
 # 3. 初始化 DeepSeek
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-
 llm = ChatOpenAI(
     model="deepseek-chat", 
     openai_api_key=DEEPSEEK_API_KEY,
@@ -37,13 +61,16 @@ def call_model(state: AgentState):
     
     # 检查状态中是否有 Cookie，以便在 Prompt 中动态提醒大模型当前登录状态
     is_logged_in = "已登录" if state.get("cookie_str") else "未登录"
+    date_anchor_prompt = get_system_date_prompt()
     
     system_prompt = SystemMessage(content=(
-        f"你是一个高校校园生活智能助手。当前系统登录状态：【{is_logged_in}】。\n"
+        f"你是一个高校校园生活智能助手。当前系统登录状态：【{is_logged_in}】。\n\n"
+        f"当前日期：{date_anchor_prompt}\n\n"
         "你能够通过调用工具帮学生查询真实课程表、查询和预约学校图书馆/体育馆、以及查询校园天气。\n"
         "1. 如果系统状态为【未登录】，且用户想要查询课表或预约，你必须【首先调用 login_to_whu_portal 工具】引导用户登录。\n"
         "2. 不要凭空编造任何数据，必须通过调用对应工具获取真实数据。\n"
         "3. 你的回答应当礼貌、简洁。"
+        
     ))
     full_messages = [system_prompt] + list(messages)
     response = llm_with_tools.invoke(full_messages)
@@ -88,7 +115,14 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
         for node_name, node_output in chunk.items():
             if node_name == "tools":
                 # 工具节点运行完毕，获取它的返回内容
-                messages = node_output.get("messages", [])
+                if isinstance(node_output, dict):
+                    messages = node_output.get("messages", [])
+                elif isinstance(node_output, list):
+                    messages = node_output
+                else:
+                    messages = []
+
+
                 if messages:
                     last_msg = messages[-1]
                     yield {
