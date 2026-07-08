@@ -51,7 +51,7 @@ def map_semester(semester: str) -> tuple:
 # 核心工具函数
 # ==========================================================
 @tool(description="通过 API 接口直接查询武汉大学教务系统成绩（无需浏览器），支持指定学年和学期")
-def query_whu_grades_api(
+def query_whu_grades_realtime(
     state: Annotated[dict, InjectedState],
     year: str = "2025",
     semester: str = "2"
