@@ -15,7 +15,7 @@ def query_whu_schedule(query_date: str,state:Annotated[dict ,InjectedState]) -> 
     """
     url = "https://zhlj.whu.edu.cn/whdxSchedule/getScheduleData"
     cookies = state.get("cookies", {})
-    actual_cookie = cookies.get("educational")  # 获取教务 Cookie
+    actual_cookie = cookies.get("zhlj")  # 获取教务 Cookie
     if not actual_cookie:
         return "【登录失效】：未检测到教务系统的有效 Cookie，请重新登录。"
     headers = {
