@@ -63,10 +63,10 @@ def interactive_whu_login() -> dict:
                 if xid:
                     captured_credentials["xid"] = xid
 
-        page.on("request", handle_request)
+        #page.on("request", handle_request)
 
         # 3. 后台自动免密跳转到图书馆的官方 OAuth 回调接口
-        print("[✔] [后台免密流转] 正在通过图书馆官方 OAuth 重定向接口同步登录状态...")
+        '''print("[✔] [后台免密流转] 正在通过图书馆官方 OAuth 重定向接口同步登录状态...")
         lib_oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
         page.goto(lib_oauth_url)
         
@@ -89,22 +89,17 @@ def interactive_whu_login() -> dict:
                 print("🎉 成功截获自习室核心 48位 会话 Token 凭证！")
                 break
             time.sleep(1)
-
+'''
         # 4. 导出当前上下文里所有的多域名 Cookie 列表
         raw_cookies = context.cookies()
         browser.close()
 
-        if not captured_credentials["token"] or not jwt_token:
-            raise TimeoutError("未能成功截获图书馆选座系统的 Token。")
+        #if not captured_credentials["token"] or not jwt_token:
+        #    raise TimeoutError("未能成功截获图书馆选座系统的 Token。")
 
         return {
             "cookie_str": cookie_str,
-            "library_token": captured_credentials["token"],
-            "library_jwt_token": jwt_token, # 导出 JWT 长密钥
-            "raw_cookies": raw_cookies,
-            "library_hmac":captured_credentials["hmac"],
-            "library_request_date":captured_credentials["xdate"],
-            "library_request_id":captured_credentials["xid"]
+            "raw_cookies": raw_cookies
         }
 # tools/login_helper.py (在您原有代码下方追加以下内容)
 
