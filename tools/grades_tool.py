@@ -51,7 +51,7 @@ def map_semester(semester: str) -> tuple:
 # 核心工具函数
 # ==========================================================
 @tool(description="通过 API 接口直接查询武汉大学教务系统成绩（无需浏览器），支持指定学年和学期")
-def query_whu_grades_api(
+def query_whu_grades_realtime(
     state: Annotated[dict, InjectedState],
     year: str = "2025",
     semester: str = "2"
@@ -72,11 +72,11 @@ def query_whu_grades_api(
     xqm_code, semester_display = map_semester(semester)
 
     # -------------------- 2. 提取 Cookie --------------------
-    cookie_data = state.get("cookie_str", {})
-    if isinstance(cookie_data, dict):
-        cookie_str = cookie_data.get("jwgl_cookie_str", "")
-    else:
-        cookie_str = cookie_data
+     # 1. 从状态机获取分类 cookies 字典
+    cookies = state.get("cookies", {})
+    
+    # 2. 精准获取我们在 login_helper 中定义好的 "educational" 键 (也就是教务系统的 Cookie 字符串) [2, 3]
+    cookie_str = cookies.get("educational")
 
     if not cookie_str:
         return "【系统提示】未检测到教务系统 Cookie，请先调用 login_to_whu_portal 登录。"
@@ -264,7 +264,7 @@ if __name__ == "__main__":
     print("查询 2025-2026 学年第二学期成绩...\n")
 
     try:
-        result = query_whu_grades_api.invoke({
+        result = query_whu_grades_realtime.invoke({
             "state": test_state,
             "year": "2025",
             "semester": "1"   # 直接传入 "2" 即可
