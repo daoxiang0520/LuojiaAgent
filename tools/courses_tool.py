@@ -17,7 +17,7 @@ def query_whu_schedule(query_date: str,state:Annotated[dict ,InjectedState]) -> 
     cookies = state.get("cookies", {})
     actual_cookie = cookies.get("zhlj")  # 获取教务 Cookie
     if not actual_cookie:
-        return "【登录失效】：未检测到教务系统的有效 Cookie，请重新登录。"
+        return "【登录失效】：未检测到智慧珞珈的有效 Cookie，请重新登录。"
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br, zstd",

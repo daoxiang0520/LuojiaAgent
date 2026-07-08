@@ -251,7 +251,7 @@ def login_to_whu_portal(tool_call_id: Annotated[str, InjectedToolCallId]) -> Com
         }
         return Command(
             update={
-                "cookie_str": cookies_dict,
+                "cookies": cookies_dict,
                 "messages": [ToolMessage(
                     content="【系统消息】统一身份认证成功！已成功截获智慧珞珈、教务系统、图书馆三端凭证并注入系统环境。",
                     tool_call_id=tool_call_id
