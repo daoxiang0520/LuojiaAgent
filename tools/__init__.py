@@ -5,6 +5,10 @@
 from .login_helper import login_to_whu_portal
 from .courses_tool import query_whu_schedule
 from .library_tool import query_library_seats
+from .library_tool import query_empty_seats_in_area
+from .library_tool import reserve_library_seat
+from .library_tool import query_user_reservations
+from .library_tool import cancel_library_reservation
 from .weather_tool import get_whu_rain_forecast
 from .grades_tool import query_whu_grades_realtime
 
@@ -14,7 +18,11 @@ ALL_TOOLS = [
     query_whu_schedule,
     query_library_seats,
     get_whu_rain_forecast,
-    query_whu_grades_realtime
+    query_whu_grades_realtime,
+    query_empty_seats_in_area,
+    reserve_library_seat,
+    query_user_reservations,
+    cancel_library_reservation
 ]
 # 3. 暴露给外部
 __all__ = ["ALL_TOOLS"]
