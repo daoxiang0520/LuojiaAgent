@@ -60,7 +60,7 @@ tool_node = ToolNode(ALL_TOOLS)
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 llm = ChatOpenAI(
     model="deepseek-chat", 
-    openai_api_key="sk-4ef78b546ebb4d6dae12c1de5f17d734",
+    openai_api_key="",
     openai_api_base="https://api.deepseek.com",
     temperature=0.1
 )
