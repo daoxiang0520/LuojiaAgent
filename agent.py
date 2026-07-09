@@ -153,7 +153,16 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
                             tool_mapping = {
                                 "login_to_whu_portal": "武大统一身份认证",
                                 "query_whu_schedule": "教务课表查询",
-                                "book_school_facility": "场馆预约系统"
+                                "query_library_seats": "图书馆座位大盘",
+                                "query_empty_seats_in_area": "区域座位分布图",
+                                "reserve_library_seat": "图书馆座位预约",
+                                "query_user_reservations": "预约记录查询",
+                                "cancel_library_reservation": "取消预约",
+                                "get_current_usage": "当前使用中座位",
+                                "stop_library_usage": "结束使用(签退)",
+                                "query_whu_grades_realtime": "成绩查询",
+                                "query_whu_exam_schedule": "考试安排查询",
+                                "get_whu_rain_forecast": "校园天气预测",
                             }
                             display_name = tool_mapping.get(tc['name'], tc['name'])
                             yield {
