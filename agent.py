@@ -57,11 +57,17 @@ class AgentState(TypedDict):
 # 2. 注册工具节点
 tool_node = ToolNode(ALL_TOOLS)
 
-# 3. 初始化 DeepSeek
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+# 3. 初始化 DeepSeek — 从 api.key 文件读取密钥
+def _load_api_key() -> str:
+    key_file = os.path.join(os.path.dirname(__file__), "api.key")
+    if os.path.exists(key_file):
+        with open(key_file, "r") as f:
+            return f.read().strip()
+    return os.getenv("DEEPSEEK_API_KEY", "")
+
 llm = ChatOpenAI(
-    model="deepseek-chat", 
-    openai_api_key=DEEPSEEK_API_KEY,
+    model="deepseek-chat",
+    openai_api_key=_load_api_key(),
     openai_api_base="https://api.deepseek.com",
     temperature=0.1
 )
