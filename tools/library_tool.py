@@ -81,7 +81,17 @@ def query_library_seats(
     library_name: str = "总馆",
     state: Annotated[dict, InjectedState] = None
 ) -> str:
-    """查询武汉大学图书馆各个分馆在指定日期的自习室/座位整体空闲大盘余量。"""
+    """查询武汉大学图书馆某个分馆在指定日期的所有自习区域座位空闲概览。
+
+    用途：用户想了解某个图书馆整体座位情况时调用。返回各楼层各区域的名称、总座位数、空闲数和区域ID。
+    调用时机：用户问"总馆明天有座位吗"、"信息分馆还有空位吗"等。这是座位查询的第一步，后续如需看具体座位排布，再用 query_empty_seats_in_area。
+
+    参数:
+    - query_date: 查询日期，格式 YYYY-MM-DD（如 "2026-07-10"）。用户说"明天"时需要根据系统时间锚点换算。
+    - library_name: 分馆名称。支持: 总馆/主馆、信息分馆/信息学部分馆、工学分馆/工学部分馆、医学分馆/医学部分馆。默认"总馆"。
+    - state: 系统自动注入的凭证，无需传入。
+
+    返回: 各区域列表，每行含楼层、区域名、总座位、空闲数、区域ID（后续查座位图或预约需要此ID）。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     matched_id = "1812737769937670144" # 默认总馆
@@ -172,7 +182,19 @@ def query_empty_seats_in_area(
     begin_time: str = "08:12",
     state: Annotated[dict, InjectedState] = None
 ) -> str:
-    """查询指定自习室区域（如 A1座位区）内所有具体座位（包含空闲🟢和占用🔴）的横向排布分布图。"""
+    """查询指定自习区域内所有座位的实时状态，按排(Row)展示空闲🟢/占用🔴分布图。
+
+    用途：用户想选一个具体座位时，先调用此工具查看该区域每排每座的空闲情况，然后选一个空闲座位号去预约。
+    调用时机：在 query_library_seats 之后，用户说"看看A1区有哪些空位"、"3楼自主学习区还有什么座位"时调用。
+    前置条件：需要先从 query_library_seats 的返回结果中获取目标区域的 area_id（19位数字）。
+
+    参数:
+    - query_date: 查询日期，格式 YYYY-MM-DD。
+    - area_id: 区域ID（19位雪花ID，从 query_library_seats 返回的 `区域ID` 字段获取）。
+    - begin_time: 查询起始时间，格式 HH:MM（如 "08:12"），默认 "08:12"。
+    - state: 系统自动注入，无需传入。
+
+    返回: 按排(行)展示的座位图，每个座位显示座位号和🟢空闲/🔴占用状态。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     try:
