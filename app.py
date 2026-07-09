@@ -1,13 +1,78 @@
-# app.py 新增强制背景过渡动画 + 日间/夜间一键切换模态设置弹窗
+# app.py
 import streamlit as st
 import uuid
 from typing import Generator, Dict
 
-# 页面基础配置必须放在最顶部
+# ==============================================================================
+# 1. 页面基础配置 (必须处于脚本最顶部)
+# ==============================================================================
 st.set_page_config(page_title="LuojiaAgent 校园助手", page_icon="🏫", layout="wide")
 
-# ===================== 工具函数 =====================
+# ==============================================================================
+# 2. 常量与主题配置中心 (已对色彩深度调优，极致护眼)
+# ==============================================================================
+THEMES = {
+    "day": {
+        "bg_list": [
+            "linear-gradient(135deg, #f4f6f9 0%, #eef1f6 100%)",  # 柔和冰蓝灰
+            "linear-gradient(135deg, #fdfbf7 0%, #f5f0e6 100%)",  # 暖纸色 (极度舒适)
+            "linear-gradient(135deg, #f5fbf7 0%, #eaf5ee 100%)",  # 淡雅薄荷
+            "linear-gradient(135deg, #fcf5f7 0%, #f3e6eb 100%)",  # 晚樱粉白
+            "linear-gradient(135deg, #f6f5fa 0%, #ebe9f3 100%)",  # 软紫罗兰
+        ],
+        "mask_rgb": "248, 250, 252",  # Slate-50 舒适底色
+        "text_color": "#1e293b",      # Slate-800 代替纯黑，柔和对比
+        "bubble_bg": "rgba(255, 255, 255, 0.95)",
+        "sidebar_bg": "rgba(241, 245, 249, 0.92)"
+    },
+    "night": {
+        "bg_list": [
+            "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",  # 深灰石板色 (主打)
+            "linear-gradient(135deg, #151515 0%, #222222 100%)",  # 暖灰黑 (无眩光)
+            "linear-gradient(135deg, #121824 0%, #1a2332 100%)",  # 科技暗蓝
+            "linear-gradient(135deg, #1b1622 0%, #282132 100%)",  # 极低蓝光暖紫
+            "linear-gradient(135deg, #1c1917 0%, #292524 100%)",  # 暖石墨色
+        ],
+        "mask_rgb": "15, 23, 42",      # Slate-900 绝佳滤光底色
+        "text_color": "#e2e8f0",      # Slate-200 柔和灰白，有效防止眼球Halo效应
+        "bubble_bg": "rgba(30, 41, 59, 0.85)", # Slate-800 半透气泡
+        "sidebar_bg": "rgba(15, 23, 42, 0.9)"
+    }
+}
+
+# ==============================================================================
+# 3. 会话状态初始化
+# ==============================================================================
+def init_session_states():
+    defaults = {
+        "all_sessions": {},
+        "messages": [],
+        "thread_id": str(uuid.uuid4()),
+        "is_login": False,
+        "login_fail_msg": "",
+        "bg_index": 0,
+        "bg_opacity": 0.65,
+        "auto_read_ai": True,
+        "show_setting_modal": False,
+        "theme_mode": "day",
+        "pending_speech": None  # 用于记录当前需要朗读的文本，防止 rerun 中断语音播报
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_states()
+
+# 根据当前主题读取配置
+current_theme = THEMES[st.session_state.theme_mode]
+bg_list = current_theme["bg_list"]
+current_bg = bg_list[st.session_state.bg_index]
+
+# ==============================================================================
+# 4. 工具与辅助函数
+# ==============================================================================
 def speak_text(text: str):
+    """通过系统 SpeechSynthesis 接口朗读文本"""
     safe_text = text.replace("`", r"\`").replace('"', r'\"').replace("'", r"\'")
     js_script = f"""
     <script>
@@ -20,80 +85,127 @@ def speak_text(text: str):
     """
     st.components.v1.html(js_script, height=0)
 
-# ===================== 会话状态初始化 =====================
-if "all_sessions" not in st.session_state:
-    st.session_state.all_sessions = {}
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid.uuid4())
-if "is_login" not in st.session_state:
-    st.session_state.is_login = False
-if "login_fail_msg" not in st.session_state:
-    st.session_state.login_fail_msg = ""
-if "bg_index" not in st.session_state:
-    st.session_state.bg_index = 0
-if "bg_opacity" not in st.session_state:
-    st.session_state.bg_opacity = 0.65
-if "auto_read_ai" not in st.session_state:
-    st.session_state.auto_read_ai = True
-if "show_setting_modal" not in st.session_state:
+def inject_custom_css():
+    """动态注入 CSS 样式以支持主题切换和背景动画效果"""
+    st.markdown(f"""
+    <style>
+    /* 全局背景过渡动画 */
+    .stApp {{
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-image: {current_bg};
+        background-size: cover !important;
+        background-repeat: no-repeat !important;
+        background-position: center center !important;
+        background-attachment: fixed !important;
+        z-index: -2;
+        transition: background-image 0.6s ease-in-out;
+    }}
+    /* 遮罩层过渡 */
+    .stApp::before {{
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: rgba({current_theme['mask_rgb']}, {st.session_state.bg_opacity});
+        z-index: -1;
+        transition: background-color 0.6s ease-in-out;
+    }}
+    /* 主界面文字颜色自适应 */
+    .main .stMarkdown, .main p, .main span, .main li, .main label {{
+        color: {current_theme['text_color']} !important;
+    }}
+    .main h1, .main h2, .main h3, .main h4, .main h5, .main h6 {{
+        color: {current_theme['text_color']} !important;
+    }}
+    /* 侧边栏文字颜色自适应 */
+    section[data-testid="stSidebar"] .stMarkdown, 
+    section[data-testid="stSidebar"] p, 
+    section[data-testid="stSidebar"] span, 
+    section[data-testid="stSidebar"] label {{
+        color: {current_theme['text_color']} !important;
+    }}
+    section[data-testid="stSidebar"] h1, 
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3 {{
+        color: {current_theme['text_color']} !important;
+    }}
+    div[data-testid="stCaptionContainer"] {{
+        text-align: center;
+        color: {current_theme['text_color']} !important;
+    }}
+    /* 气泡样式自适应 */
+    .stChatMessage {{
+        background: {current_theme['bubble_bg']} !important;
+        border-radius: 12px !important;
+    }}
+    /* 侧边栏布局调优 */
+    section[data-testid="stSidebar"] {{
+        background: transparent !important;
+    }}
+    section[data-testid="stSidebar"] .stVerticalBlock {{
+        background: {current_theme['sidebar_bg']};
+        padding: 12px;
+        border-radius: 10px;
+    }}
+    /* 侧边栏三点操作按钮微调：精简边框与高度，使其更契合行内布局 */
+    section[data-testid="stSidebar"] div[data-testid="stPopover"] button {{
+        border: 1px solid rgba(128, 128, 128, 0.15) !important;
+        background: transparent !important;
+        border-radius: 6px !important;
+        height: 100% !important;
+    }}
+    /* 聊天输入框美化 */
+    div[data-testid="stChatInput"] {{
+        border-radius: 18px !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08) !important;
+    }}
+    div[data-testid="stChatInput"] textarea {{
+        border-radius: 18px !important;
+        padding: 12px 16px !important;
+        border: 1px solid #e0e7ff !important;
+        background: rgba(255,255,255,0.1);
+        color: {current_theme['text_color']} !important;
+    }}
+    .stChatMessage div[data-testid="stHorizontalBlock"] {{
+        justify-content: flex-end;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+inject_custom_css()
+
+# ==============================================================================
+# 5. 模态设置面板 (Dialog)
+# ==============================================================================
+def reset_setting_modal():
+    """当用户通过点击外部、按 ESC 键或右上角 X 键关闭设置弹窗时，清除状态标志"""
     st.session_state.show_setting_modal = False
-# 昼夜模式标识：day 日间 / night 夜间
-if "theme_mode" not in st.session_state:
-    st.session_state.theme_mode = "day"
 
-# 日间渐变背景池
-day_bg_list = [
-    "linear-gradient(135deg, #e8f0ff 0%, #d6e4ff 100%)",
-    "linear-gradient(135deg, #f0f8e8 0%, #e0efd0 100%)",
-    "linear-gradient(135deg, #fff0f6 0%, #ffe0ec 100%)",
-    "linear-gradient(135deg, #f8f8f8 0%, #e9e9e9 100%)",
-    "linear-gradient(135deg, #f0f7ff 0%, #cce0ff 100%)",
-]
-# 夜间深色渐变背景池
-night_bg_list = [
-    "linear-gradient(135deg, #19202d 0%, #2c384a 100%)",
-    "linear-gradient(135deg, #101828 0%, #1d2939 100%)",
-    "linear-gradient(135deg, #202030 0%, #2d2d44 100%)",
-    "linear-gradient(135deg, #1a2435 0%, #283850 100%)",
-    "linear-gradient(135deg, #23233a 0%, #323250 100%)",
-]
-
-# 根据昼夜模式读取对应背景列表
-if st.session_state.theme_mode == "day":
-    bg_list = day_bg_list
-    mask_rgb = "255,255,255"
-    text_color = "#111111"
-    bubble_bg = "rgba(255,255,255,0.92)"
-    sidebar_bg = "rgba(255,255,255,0.86)"
-else:
-    bg_list = night_bg_list
-    mask_rgb = "12,16,24"
-    text_color = "#f0f0f0"
-    bubble_bg = "rgba(35,40,55,0.88)"
-    sidebar_bg = "rgba(28,32,45,0.88)"
-
-current_bg = bg_list[st.session_state.bg_index]
-
-# ===================== 模态设置弹窗 =====================
-@st.dialog("系统设置面板", width="small")
-def setting_modal():
+@st.dialog("系统设置面板", width="small", on_dismiss=reset_setting_modal)
+def render_setting_modal():
     st.subheader("🌓 显示模式")
-    # 昼夜切换按钮
-    col_day, col_night = st.columns(2)
-    with col_day:
-        if st.button("☀️ 日间模式", use_container_width=True, type="primary" if st.session_state.theme_mode == "day" else "secondary"):
-            st.session_state.theme_mode = "day"
-            st.rerun()
-    with col_night:
-        if st.button("🌙 夜间模式", use_container_width=True, type="primary" if st.session_state.theme_mode == "night" else "secondary"):
-            st.session_state.theme_mode = "night"
-            st.rerun()
+    
+    # 优化为单开关模式：开是黑夜，白是优化
+    is_night = st.session_state.theme_mode == "night"
+    theme_toggle = st.toggle(
+        "开启低蓝光夜间模式 (关闭为护眼日间模式)", 
+        value=is_night,
+        help="开启后切换为柔和低光slate暗色调；关闭则恢复为高清晰暖光日间调色"
+    )
+    
+    new_mode = "night" if theme_toggle else "day"
+    if new_mode != st.session_state.theme_mode:
+        st.session_state.theme_mode = new_mode
+        st.rerun()
 
     st.divider()
     st.subheader("🖼️ 背景设置")
-    # 透明度滑块（实时全局刷新，弹窗不关闭）
     new_opacity = st.slider(
         "背景淡化透明度",
         min_value=0.0,
@@ -106,7 +218,6 @@ def setting_modal():
         st.session_state.bg_opacity = new_opacity
         st.rerun()
 
-    # 切换背景（自带强制过渡动画）
     if st.button("切换内置背景", use_container_width=True):
         st.session_state.bg_index = (st.session_state.bg_index + 1) % len(bg_list)
         st.rerun()
@@ -120,241 +231,193 @@ def setting_modal():
         help="开启后AI回答生成完毕自动朗读全文"
     )
     st.divider()
-    # 手动关闭按钮
     if st.button("关闭设置", type="secondary", use_container_width=True):
         st.session_state.show_setting_modal = False
         st.rerun()
 
-# ===================== 顶部标题 + 右上角⚙️设置按钮 =====================
-header_row = st.columns([0.92, 0.08])
-with header_row[0]:
-    st.title("🏫 LuojiaAgent 智能校园助手")
-    st.caption("基于 DeepSeek 与 LangGraph 构建的武大校园助手系统")
+# ==============================================================================
+# 6. 侧边栏渲染 (Sidebar)
+# ==============================================================================
+def render_sidebar():
+    with st.sidebar:
+        st.subheader("账号状态")
+        if st.session_state.login_fail_msg:
+            st.error(st.session_state.login_fail_msg)
+            
+        if not st.session_state.is_login:
+            login_btn = st.button("🔐 点击登录", use_container_width=True, type="primary")
+            if login_btn:
+                st.session_state.login_fail_msg = ""
+                try:
+                    from agent import run_agent_stream
+                    login_generator = run_agent_stream(
+                        user_input="调用统一身份登录工具完成登录",
+                        thread_id=st.session_state.thread_id,
+                        student_id="",
+                        password=""
+                    )
+                    with st.status("正在唤起浏览器登录窗口...", expanded=True) as login_status:
+                        login_success = False
+                        for event in login_generator:
+                            event_type = event.get("type")
+                            content = event.get("content", "")
+                            login_status.write(content)
+                            if event_type == "tool_output":
+                                login_success = True
+                        if login_success:
+                            st.session_state.is_login = True
+                            login_status.update(label="✅ 登录完成", state="complete", expanded=False)
+                        else:
+                            st.session_state.login_fail_msg = "未完成浏览器登录验证，请重试"
+                            login_status.update(label="❌ 登录失败", state="error", expanded=True)
+                except Exception as e:
+                    st.session_state.login_fail_msg = f"登录异常：{str(e)}"
+                st.rerun()
+        else:
+            logout_btn = st.button("✅ 已登录 | 点击退出登录", use_container_width=True, type="secondary")
+            if logout_btn:
+                st.session_state.is_login = False
+                st.session_state.login_fail_msg = ""
+                st.session_state.thread_id = str(uuid.uuid4())
+                st.session_state.messages = []
+                st.rerun()
+
+        st.divider()
+        st.subheader("💬 快捷操作")
+        if st.button("🗑️ 清空当前聊天", use_container_width=True, type="secondary"):
+            st.session_state.messages = []
+            st.rerun()
+            
+        if st.button("🔄 新建对话会话", use_container_width=True, type="primary"):
+            if len(st.session_state.messages) > 0:
+                first_user_msg = next(
+                    (m["content"] for m in st.session_state.messages if m["role"] == "user"),
+                    "空白对话"
+                )
+                session_title = first_user_msg[:20] + "..." if len(first_user_msg) > 20 else first_user_msg
+                st.session_state.all_sessions[st.session_state.thread_id] = {
+                    "title": session_title,
+                    "messages": st.session_state.messages.copy()
+                }
+            st.session_state.messages = []
+            st.session_state.thread_id = str(uuid.uuid4())
+            st.rerun()
+
+        st.divider()
+        st.header("📚 历史对话存档")
+        st.divider()
+        
+        current_tid = st.session_state.thread_id
+        session_items = list(st.session_state.all_sessions.items())
+        
+        if not session_items:
+            st.info("暂无存档\n新建对话后自动保存")
+        else:
+            for tid, info in reversed(session_items):
+                title = info["title"]
+                msg_count = len(info["messages"])
+                btn_label = f"🟢 {title} ({msg_count}条)" if tid == current_tid else f"📄 {title} ({msg_count}条)"
+                btn_type = "primary" if tid == current_tid else "secondary"
+                
+                # 优化重构：历史存档单行化，删除功能收纳在三个点内
+                btn_col1, btn_col2 = st.columns([0.82, 0.18], vertical_alignment="center")
+                with btn_col1:
+                    if st.button(btn_label, type=btn_type, use_container_width=True, key=f"switch_{tid}"):
+                        st.session_state.thread_id = tid
+                        st.session_state.messages = info["messages"].copy()
+                        st.rerun()
+                with btn_col2:
+                    with st.popover("⋮", use_container_width=True, help="会话管理选项"):
+                        st.write("📂 历史会话管理")
+                        if st.button("🗑️ 删除此对话", key=f"del_{tid}", use_container_width=True, type="primary"):
+                            del st.session_state.all_sessions[tid]
+                            if tid == current_tid:
+                                st.session_state.messages = []
+                                st.session_state.thread_id = str(uuid.uuid4())
+                            st.rerun()
+                            
+        st.divider()
+        if st.button("🧹 清空所有存档", use_container_width=True):
+            st.session_state.all_sessions = {}
+            st.rerun()
+
+# ==============================================================================
+# 7. 页面头部渲染 (采用三栏布局，实现大标题水平居中)
+# ==============================================================================
+header_row = st.columns([0.15, 0.7, 0.15], vertical_alignment="center")
 with header_row[1]:
+    # 使用 HTML 标签与 CSS 行内样式实现主、副标题的水平居中，并自适应当前主题文字颜色
+    st.markdown(
+        f"<h1 style='text-align: center; margin: 0; padding: 0; color: {current_theme['text_color']};'>🏫 LuojiaAgent 智能校园助手</h1>", 
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<p style='text-align: center; margin: 8px 0 0 0; font-size: 0.95rem; color: {current_theme['text_color']}; opacity: 0.85;'>基于 DeepSeek 与 LangGraph 构建的武大校园助手系统</p>", 
+        unsafe_allow_html=True
+    )
+with header_row[2]:
     setting_btn = st.button("⚙️ 设置", use_container_width=True, help="打开背景/朗读/显示模式设置面板")
     if setting_btn:
         st.session_state.show_setting_modal = True
         st.rerun()
 
-# 常驻模态弹窗
+# 保持设置面板和侧边栏按需运行
 if st.session_state.show_setting_modal:
-    setting_modal()
+    render_setting_modal()
 
-# ===================== 侧边栏 =====================
-with st.sidebar:
-    st.subheader("账号状态")
-    if st.session_state.login_fail_msg:
-        st.error(st.session_state.login_fail_msg)
-    if not st.session_state.is_login:
-        login_btn = st.button("🔐 点击登录", use_container_width=True, type="primary")
-        if login_btn:
-            st.session_state.login_fail_msg = ""
-            try:
-                from agent import run_agent_stream
-                login_generator = run_agent_stream(
-                    user_input="调用统一身份登录工具完成登录",
-                    thread_id=st.session_state.thread_id,
-                    student_id="",
-                    password=""
-                )
-                with st.status("正在唤起浏览器登录窗口...", expanded=True) as login_status:
-                    login_success = False
-                    for event in login_generator:
-                        event_type = event.get("type")
-                        content = event.get("content", "")
-                        login_status.write(content)
-                        if event_type == "tool_output":
-                            login_success = True
-                    if login_success:
-                        st.session_state.is_login = True
-                        login_status.update(label="✅ 登录完成", state="complete", expanded=False)
-                    else:
-                        st.session_state.login_fail_msg = "未完成浏览器登录验证，请重试"
-                        login_status.update(label="❌ 登录失败", state="error", expanded=True)
-            except Exception as e:
-                st.session_state.login_fail_msg = f"登录异常：{str(e)}"
-            st.rerun()
-    else:
-        logout_btn = st.button("✅ 已登录 | 点击退出登录", use_container_width=True, type="secondary")
-        if logout_btn:
-            st.session_state.is_login = False
-            st.session_state.login_fail_msg = ""
-            st.session_state.thread_id = str(uuid.uuid4())
-            st.session_state.messages = []
-            st.rerun()
+render_sidebar()
 
-    st.divider()
-    st.subheader("💬 快捷操作")
-    if st.button("🗑️ 清空当前聊天", use_container_width=True, type="secondary"):
-        st.session_state.messages = []
-        st.rerun()
-    if st.button("🔄 新建对话会话", use_container_width=True, type="primary"):
-        if len(st.session_state.messages) > 0:
-            first_user_msg = next(
-                (m["content"] for m in st.session_state.messages if m["role"] == "user"),
-                "空白对话"
-            )
-            session_title = first_user_msg[:20] + "..." if len(first_user_msg) > 20 else first_user_msg
-            st.session_state.all_sessions[st.session_state.thread_id] = {
-                "title": session_title,
-                "messages": st.session_state.messages.copy()
-            }
-        st.session_state.messages = []
-        st.session_state.thread_id = str(uuid.uuid4())
-        st.rerun()
-
-    st.divider()
-    st.header("📚 历史对话存档")
-    st.divider()
-    current_tid = st.session_state.thread_id
-    session_items = list(st.session_state.all_sessions.items())
-    if not session_items:
-        st.info("暂无存档\n新建对话后自动保存")
-    else:
-        for tid, info in reversed(session_items):
-            title = info["title"]
-            msg_count = len(info["messages"])
-            btn_label = f"🟢 {title} ({msg_count}条)" if tid == current_tid else f"📄 {title} ({msg_count}条)"
-            btn_type = "primary" if tid == current_tid else "secondary"
-            btn_col1, btn_col2 = st.columns([4, 1])
-            with btn_col1:
-                if st.button(btn_label, type=btn_type, use_container_width=True, key=f"switch_{tid}"):
-                    st.session_state.thread_id = tid
-                    st.session_state.messages = info["messages"].copy()
-                    st.rerun()
-            with btn_col2:
-                if st.button("🗑️", key=f"del_{tid}", help="删除本条存档对话"):
-                    del st.session_state.all_sessions[tid]
-                    if tid == current_tid:
-                        st.session_state.messages = []
-                        st.session_state.thread_id = str(uuid.uuid4())
-                    st.rerun()
-    st.divider()
-    if st.button("🧹 清空所有存档", use_container_width=True):
-        st.session_state.all_sessions = {}
-        st.rerun()
-
-# ===================== 全局CSS（核心：强制背景过渡动画 + 昼夜配色适配） =====================
-st.markdown(f"""
-<style>
-/* 全局背景，强制0.6s平滑过渡动画，无开关永久生效 */
-.stApp {{
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background-image: {current_bg};
-    background-size: cover !important;
-    background-repeat: no-repeat !important;
-    background-position: center center !important;
-    background-attachment: fixed !important;
-    z-index: -2;
-    /* 强制切换动画：渐变背景平滑过渡 */
-    transition: background-image 0.6s ease-in-out;
-}}
-/* 遮罩层同步过渡，透明度变化也带动画 */
-.stApp::before {{
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background-color: rgba({mask_rgb}, {st.session_state.bg_opacity});
-    z-index: -1;
-    transition: background-color 0.6s ease-in-out;
-}}
-/* 全局文字颜色适配昼夜模式 */
-.main, .stMarkdown, p, span, label {{
-    color: {text_color} !important;
-}}
-h1 {{
-    text-align: center !important;
-    color: {text_color} !important;
-}}
-div[data-testid="stCaptionContainer"] {{
-    text-align: center;
-    color: {text_color} !important;
-}}
-/* 聊天气泡自适应昼夜 */
-.stChatMessage {{
-    background: {bubble_bg} !important;
-    border-radius: 12px !important;
-}}
-/* 侧边栏透明基底自适应昼夜 */
-section[data-testid="stSidebar"] {{
-    background: transparent !important;
-}}
-section[data-testid="stSidebar"] .stVerticalBlock {{
-    background: {sidebar_bg};
-    padding: 12px;
-    border-radius: 10px;
-}}
-/* 聊天输入框圆角美化 */
-div[data-testid="stChatInput"] {{
-    border-radius: 18px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.08) !important;
-}}
-div[data-testid="stChatInput"] textarea {{
-    border-radius: 18px !important;
-    padding: 12px 16px !important;
-    border: 1px solid #e0e7ff !important;
-    background: rgba(255,255,255,0.1);
-    color: {text_color} !important;
-}}
-/* 朗读按钮靠右 */
-.stChatMessage div[data-testid="stHorizontalBlock"] {{
-    justify-content: flex-end;
-}}
-/* 右上角⚙️设置按钮样式，防止挤压 */
-div[data-testid="stHorizontalBlock"] > div:nth-child(2) .stButton button {{
-    margin-top: 18px !important;
-    padding: 8px 4px !important;
-    font-size: 16px !important;
-    min-width: 80px !important;
-}}
-</style>
-""", unsafe_allow_html=True)
-
-# ========== 聊天区域 ==========
+# ==============================================================================
+# 8. 主聊天区域与逻辑控制 (Main Interface)
+# ==============================================================================
 chat_container = st.container(height=600)
 with chat_container:
+    # 渲染历史保存下来的所有对话消息
     for msg_idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            col_text, col_audio = st.columns([9, 1])
+            col_text, col_audio = st.columns([0.92, 0.08], vertical_alignment="center")
             with col_audio:
-                read_btn = st.button("🔊", key=f"read_msg_{msg_idx}", help="朗读本条文本")
-                if read_btn:
+                if st.button("🔊", key=f"read_msg_{msg_idx}", help="朗读本条文本", use_container_width=True):
                     speak_text(msg["content"])
 
-# 聊天输入框
+# 检查并在页面主渲染结束后播报语音（避免直接在 rerun 之前播放导致音频被页面刷新截断）
+if st.session_state.pending_speech:
+    speak_text(st.session_state.pending_speech)
+    st.session_state.pending_speech = None
+
+# 用户交互处理
 user_input = st.chat_input("有什么我可以帮您的？(例如：帮我查明天的课表)")
 if user_input:
     user_input = user_input.strip()
     if user_input == "":
         st.warning("请输入有效提问内容")
         st.stop()
+        
     if not st.session_state.is_login:
         st.error("当前未登录，请先点击左侧侧边栏【🔐 点击登录】完成统一身份认证！")
         st.stop()
 
+    # 1. 用户提问上屏与记录
     st.session_state.messages.append({"role": "user", "content": user_input})
     with chat_container:
         with st.chat_message("user"):
             st.markdown(user_input)
-            col_text, col_audio = st.columns([9, 1])
+            col_text, col_audio = st.columns([0.92, 0.08], vertical_alignment="center")
             with col_audio:
                 new_msg_idx = len(st.session_state.messages) - 1
-                read_btn = st.button("🔊", key=f"read_msg_{new_msg_idx}", help="朗读本条文本")
-                if read_btn:
+                if st.button("🔊", key=f"read_msg_{new_msg_idx}", help="朗读本条文本", use_container_width=True):
                     speak_text(user_input)
 
+    # 2. 助手流式交互及工具调用反馈
     accumulated_answer = ""
     with chat_container:
         with st.chat_message("assistant"):
+            # 1. 声明状态容器 (在上方展示思考与工具调用链)
+            status_container = st.status("🔍 智能体正在规划与执行...", expanded=True)
+            # 2. 声明回答容器 (在下方展示最终回答)
             response_placeholder = st.empty()
+            
             try:
                 from agent import run_agent_stream
                 event_generator: Generator[Dict, None, None] = run_agent_stream(
@@ -363,24 +426,47 @@ if user_input:
                     student_id="",
                     password=""
                 )
-                for event in event_generator:
-                    event_type = event.get("type")
-                    content = event.get("content", "")
-                    if event_type == "tool_input":
-                        accumulated_answer += content
-                        response_placeholder.markdown(accumulated_answer)
-                    elif event_type == "tool_output":
-                        accumulated_answer = content
-                        response_placeholder.markdown(accumulated_answer)
+                
+                # 将运行过程日志输出到状态容器中
+                with status_container:
+                    for event in event_generator:
+                        event_type = event.get("type")
+                        content = event.get("content", "")
+                        
+                        if event_type == "tool_start":
+                            # 渲染智能体思考决策路径
+                            st.markdown(f"🧠 **思考决策**\n> {content}")
+                        elif event_type == "tool_output":
+                            # 💡 核心修改：通过内容前缀区分真正的工具返回和最终回答
+                            if content.startswith("📥 工具执行成功"):
+                                # 渲染工具执行返回结果
+                                st.markdown(f"📥 **工具反馈数据**")
+                                st.info(content)
+                            else:
+                                # 这是伪装成 "tool_output" 的最终回答
+                                status_container.update(label="✅ 规划与工具调用执行完毕", state="complete", expanded=False)
+                                accumulated_answer = content
+                                response_placeholder.markdown(accumulated_answer)
+                        elif event_type == "final_answer":
+                            # 兼容可能发生的事件分类
+                            status_container.update(label="✅ 规划与工具调用执行完毕", state="complete", expanded=False)
+                            accumulated_answer = content
+                            response_placeholder.markdown(accumulated_answer)
             except Exception as e:
+                status_container.update(label="❌ 执行过程中出现异常", state="error", expanded=True)
                 accumulated_answer = f"系统调用异常：{str(e)}"
                 response_placeholder.markdown(accumulated_answer)
-            col_text, col_audio = st.columns([9, 1])
+                
+            col_text, col_audio = st.columns([0.92, 0.08], vertical_alignment="center")
             with col_audio:
                 new_msg_idx = len(st.session_state.messages)
-                read_btn = st.button("🔊", key=f"read_msg_{new_msg_idx}", help="朗读本条文本")
-                if read_btn:
+                if st.button("🔊", key=f"read_msg_{new_msg_idx}", help="朗读本条文本", use_container_width=True):
                     speak_text(accumulated_answer)
+                    
+    # 3. 结果保存与语音播报配置，并触发一次整洁的 Rerun 进行状态同步
     st.session_state.messages.append({"role": "assistant", "content": accumulated_answer})
     if st.session_state.auto_read_ai and accumulated_answer.strip():
-        speak_text(accumulated_answer)
+        # 如果开启了自动朗读，将文本加入挂起变量
+        st.session_state.pending_speech = accumulated_answer
+        
+    st.rerun()  # 触发重运行，强制固化刚刚添加到 session_state 中的最新轮次对话
