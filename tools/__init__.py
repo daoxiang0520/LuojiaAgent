@@ -11,6 +11,7 @@ from .library_tool import query_user_reservations
 from .library_tool import cancel_library_reservation
 from .weather_tool import get_whu_rain_forecast
 from .grades_tool import query_whu_grades_realtime
+from .exam_tool import query_whu_exam_schedule
 
 # 2. 统一打包成一个列表，方便 agent.py 一键导入
 ALL_TOOLS = [
@@ -22,7 +23,10 @@ ALL_TOOLS = [
     query_empty_seats_in_area,
     reserve_library_seat,
     query_user_reservations,
-    cancel_library_reservation
+    cancel_library_reservation,
+    query_whu_exam_schedule
+
+
 ]
 # 3. 暴露给外部
 __all__ = ["ALL_TOOLS"]
