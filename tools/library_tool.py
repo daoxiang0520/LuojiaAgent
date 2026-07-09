@@ -288,8 +288,22 @@ def reserve_library_seat(
     end_time: str,
     state: Annotated[dict, InjectedState]
 ) -> str:
-    """自动将中文座位号转换为 19位 物理 ID，调用学校 App 受信任绿色通道预约座位。
-    如遇滑块验证码要求，自动调用 TAC 验证码破解引擎绕过。"""
+    """预约图书馆座位。自动完成座位号→物理ID转换，遇到滑块验证码自动破解重试。
+
+    用途：用户选好座位后执行预约。全自动流程：座位号对齐 → 提交预约 → 如触发验证码则自动破解 → 带token重试。
+    调用时机：用户已通过 query_library_seats + query_empty_seats_in_area 选定了目标区域和座位号，明确说"帮我预约XX号座位"时调用。
+    前置条件：需要 area_id（从 query_library_seats 获取）和 seat_label（从 query_empty_seats_in_area 的座位图中选一个空闲座位号）。
+
+    参数:
+    - query_date: 预约日期，格式 YYYY-MM-DD（如 "2026-07-10"）。
+    - library_name: 分馆名称（总馆/信息分馆/工学分馆/医学分馆），用于匹配 venueId。
+    - area_id: 区域ID（19位雪花ID，从 query_library_seats 返回的区域ID获取）。
+    - seat_label: 座位号（如 "005"、"163"），即桌贴号。必须是从 query_empty_seats_in_area 中确认空闲的座位。
+    - begin_time: 开始时间，格式 HH:MM（如 "08:00"）。
+    - end_time: 结束时间，格式 HH:MM（如 "12:00"）。注意：短时段（如30分钟）比长时段更容易成功。
+    - state: 系统自动注入，无需传入。
+
+    返回: 预约成功/失败的消息。成功时建议告知用户签到时间和地点。常见失败原因：预约窗口未开放（需22:45后）、座位已被抢、时段不可用。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     username = cookies.get("library_token", "2025302114221")
@@ -437,7 +451,17 @@ def query_user_reservations(
     query_type: str = "active",  # 可选：'active' (查当前未开始和使用中) 或 'all' (包含历史已取消/已结束)
     state: Annotated[dict, InjectedState] = None
 ) -> str:
-    """查询当前登录用户在自习室选座系统中的历史及当前有效预约单记录，用于获取退订所需的 reservation_id。"""
+    """查询用户的图书馆预约记录，返回预约单列表（含预约单ID、日期、时段、座位号、状态）。
+
+    用途：查看当前有哪些预约、获取退订所需的 reservation_id、确认预约是否生效。
+    调用时机：用户问"我的预约"、"查看我的预约记录"、"帮我取消预约"（先查记录获取ID再取消）时调用。
+    前置条件：需要先登录（login_to_whu_portal）。如果用户直接给了 reservation_id 则不需要此步。
+
+    参数:
+    - query_type: "active"（默认，仅返回待签到/使用中的有效预约）或 "all"（含历史已取消/已结束）。
+    - state: 系统自动注入，无需传入。
+
+    返回: 预约记录列表，每条含 预约单ID(`id`)、日期、时间、位置、状态。预约单ID 是 cancel_library_reservation 的必要参数。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     print(f"--- [自习室历史查询] 正在拉取用户的预约账单... ---")
@@ -531,7 +555,20 @@ def cancel_library_reservation(
     seat_label: str = None,
     state: Annotated[dict, InjectedState] = None
 ) -> str:
-    """取消用户在武汉大学图书馆已预约、但尚未入座签到的某个有效座位。"""
+    """取消一个尚未入座的图书馆座位预约，释放座位供他人使用。
+
+    用途：退订预约。支持两种定位方式：1) 直接传 reservation_id；2) 传 query_date + seat_label 自动查找。
+    调用时机：用户说"取消预约"、"退订座位"、"我不去了帮我取消"时调用。
+    前置条件：如果用户没有提供 reservation_id，建议先调用 query_user_reservations 查记录获取ID。
+    限制：每天最多取消2次。
+
+    参数:
+    - reservation_id: 预约单ID（19位雪花ID，从 query_user_reservations 返回的 `预约单ID` 获取）。有则直接取消，最快。
+    - query_date: 预约日期，格式 YYYY-MM-DD。reservation_id 为空时必填，用于匹配预约记录。
+    - seat_label: 座位号（如 "050"）。reservation_id 为空时必填。
+    - state: 系统自动注入，无需传入。
+
+    返回: 取消成功/失败的消息。常见失败：已达每日取消上限(2次)、预约已生效无法取消、预约单不存在。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     
@@ -600,7 +637,16 @@ def cancel_library_reservation(
 def get_current_usage(
     state: Annotated[dict, InjectedState] = None
 ) -> str:
-    """查询当前登录用户在图书馆正在使用中的座位（已签到入座），返回座位信息和剩余时间。"""
+    """查询当前正在使用中的座位（已签到入座状态），返回位置、时段、预约单ID等信息。
+
+    用途：确认自己当前在哪个座位、还有多久结束、获取签退所需信息。
+    调用时机：用户问"我现在在哪个座位"、"我的座位还有多久"、"帮我签退"（先查再签退）时调用。
+    区别于 query_user_reservations：本工具只查「已签到入座」状态，query_user_reservations 查「已预约但可能未签到」。
+
+    参数:
+    - state: 系统自动注入，无需传入。
+
+    返回: 当前使用中座位的完整信息（房间名、座位号、日期、时段、预约单ID），或提示无正在使用的座位。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     print("--- [当前使用] 正在查询... ---")
@@ -653,7 +699,17 @@ def get_current_usage(
 def stop_library_usage(
     state: Annotated[dict, InjectedState] = None
 ) -> str:
-    """结束当前正在使用的座位（签退释放）。调用前建议先用「查询当前使用」确认。"""
+    """结束当前正在使用的座位（签退释放），将座位归还供他人预约。
+
+    用途：提前离开图书馆时签退，释放座位。
+    调用时机：用户说"我要走了"、"签退"、"结束使用"、"释放座位"时调用。
+    前置条件（建议）：先调用 get_current_usage 确认当前确实有在使用中的座位，避免空操作。
+    注意：签退后无法撤销，请确认用户确实要离开后再调用。
+
+    参数:
+    - state: 系统自动注入，无需传入。
+
+    返回: 签退成功/失败的消息。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
     print("--- [结束使用] 正在签退... ---")
