@@ -58,7 +58,7 @@ class AgentState(TypedDict):
 tool_node = ToolNode(ALL_TOOLS)
 
 # 3. 初始化 DeepSeek
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-f3d554d13c93492a9abb9bb369365ac4")
 llm = ChatOpenAI(
     model="deepseek-chat", 
     openai_api_key=DEEPSEEK_API_KEY,
