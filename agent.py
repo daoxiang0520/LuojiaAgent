@@ -1,14 +1,15 @@
 # agent.py
 import os
+import traceback
 from langgraph.checkpoint.memory import MemorySaver
-from typing import Annotated, Sequence
+from typing import Annotated, Sequence, List
 from typing_extensions import TypedDict
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from datetime import datetime, timezone, timedelta #时间
+from datetime import datetime, timezone, timedelta
 def get_system_date_prompt() -> str:
     # 1. 强制获取东八区（北京时间）
     tz_beijing = timezone(timedelta(hours=8))
@@ -60,7 +61,7 @@ tool_node = ToolNode(ALL_TOOLS)
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 llm = ChatOpenAI(
     model="deepseek-chat", 
-    openai_api_key="sk-4ef78b546ebb4d6dae12c1de5f17d734",
+    openai_api_key="sk-a2f0818b178a45bd9edc4524358c4bbf",
     openai_api_base="https://api.deepseek.com",
     temperature=0.1
 )

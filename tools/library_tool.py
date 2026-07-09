@@ -18,8 +18,8 @@ LIBRARY_MAPPING = {
     "信息学部分馆": "1812738485913751552",
     "工学分馆": "1812738878798401536",
     "工学部分馆": "1812738878798401536",
-    "医学分馆": "1812738878798401536",
-    "医学部分馆": "1812738878798401536"
+    "医学分馆": "1812739190351302656",
+    "医学部分馆": "1812739190351302656"
 }
 
 # ==================== 辅助函数：统一完成 CAS 重定向及多安全头捕获 ====================
@@ -129,7 +129,7 @@ def query_library_seats(
                         "endMinute": 0,
                         "floorId": 0,
                         "minMinute": 0,
-                        "pageSize": 12,
+                        "pageSize": 200,
                         "power": false,
                         "roomType": false,
                         "sortField": "",
@@ -302,9 +302,7 @@ def reserve_library_seat(
     except Exception as e:
         return f"【系统错误】：获取自习室登录会话失败: {str(e)}"
 
-    # 预约请求体
-    reserve_path = f"/jsq/static/frontApi/make/freeBook/{matched_seat_uuid}/{query_date}/{begin_minute}/{end_minute}"
-
+    # 嵌套工具函数（reserve_path 将在 matched_seat_uuid 解析后于下方定义）
     def _do_add_reserve(page, cap_token=""):
         """执行 freeBook API 调用"""
         url = reserve_path
@@ -438,7 +436,7 @@ def query_user_reservations(
             page.goto(target_url, timeout=12000)
             page.wait_for_load_state("networkidle")
 
-            api_path = "/jsq/static/frontApi/reserve/index"
+            api_path = "/jsq/static/frontApi/user/history/1/15"
             eval_js = f"""
             async () => {{
                 const response = await fetch('{api_path}', {{
@@ -451,10 +449,7 @@ def query_user_reservations(
                         'X-request-id': '{creds['xid']}',
                         'loginType': 'PC'
                     }},
-                    body: JSON.stringify({{
-                        "currentPage": 1,
-                        "pageSize": 10
-                    }})
+                    body: JSON.stringify({{}})
                 }});
                 return await response.json();
             }}
@@ -543,8 +538,8 @@ def cancel_library_reservation(
 
             # 自动匹配退订 ID 模式
             if not target_reservation_id:
-                index_path = "/jsq/static/frontApi/reserve/index"
-                eval_index_js = f"async () => {{ const response = await fetch('{index_path}', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json', 'token': '{creds['token']}', 'X-hmac-request-key': '{creds['hmac']}', 'X-request-date': '{creds['xdate']}', 'X-request-id': '{creds['xid']}', 'loginType': 'PC' }}, body: JSON.stringify({{ 'currentPage': 1, 'pageSize': 15 }}) }}); return await response.json(); }}"
+                index_path = "/jsq/static/frontApi/user/history/1/15"
+                eval_index_js = f"async () => {{ const response = await fetch('{index_path}', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json', 'token': '{creds['token']}', 'X-hmac-request-key': '{creds['hmac']}', 'X-request-date': '{creds['xdate']}', 'X-request-id': '{creds['xid']}', 'loginType': 'PC' }}, body: JSON.stringify({{}}) }}); return await response.json(); }}"
                 index_json = page.evaluate(eval_index_js)
                 
                 page_list = index_json.get("data", {}).get("pageList", []) if isinstance(index_json.get("data"), dict) else []
@@ -562,7 +557,7 @@ def cancel_library_reservation(
                     return f"【取消失败】：未在您的有效账单中找到【{query_date}】第【{seat_label}号】座位的待签到订单。"
 
             # 🚀 完美匹配：执行对齐 ham 实现的 cancel POST 请求 [1.2, 3.1]
-            cancel_path = f"/jsq/static/frontApi/reserve/cancel/{target_reservation_id}"
+            cancel_path = f"/jsq/static/frontApi/make/cancel/{target_reservation_id}"
             eval_cancel_js = f"async () => {{ const response = await fetch('{cancel_path}', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json', 'token': '{creds['token']}', 'X-hmac-request-key': '{creds['hmac']}', 'X-request-date': '{creds['xdate']}', 'X-request-id': '{creds['xid']}', 'loginType': 'PC' }}, body: JSON.stringify({{}}) }}); return await response.json(); }}"
             
             res_json = page.evaluate(eval_cancel_js)
