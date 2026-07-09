@@ -61,7 +61,7 @@ tool_node = ToolNode(ALL_TOOLS)
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 llm = ChatOpenAI(
     model="deepseek-chat", 
-    openai_api_key="",
+    openai_api_key=DEEPSEEK_API_KEY,
     openai_api_base="https://api.deepseek.com",
     temperature=0.1
 )
@@ -163,6 +163,6 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
                     else:
                         # 如果大模型没有要调用的工具，说明做出了最终回答
                         yield {
-                            "type": "final_answer",
+                            "type": "tool_output",
                             "content": last_msg.content
                         }

@@ -366,10 +366,10 @@ if user_input:
                 for event in event_generator:
                     event_type = event.get("type")
                     content = event.get("content", "")
-                    if event_type == "stream_chunk":
+                    if event_type == "tool_input":
                         accumulated_answer += content
                         response_placeholder.markdown(accumulated_answer)
-                    elif event_type == "final_answer":
+                    elif event_type == "tool_output":
                         accumulated_answer = content
                         response_placeholder.markdown(accumulated_answer)
             except Exception as e:
