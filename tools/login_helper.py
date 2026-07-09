@@ -39,19 +39,25 @@ def interactive_whu_login() -> dict:
             has_portal_token = any(c['name'] == 'PORTAL-TOKEN' and c['value'] for c in cookies)
 
             if has_portal_token:
-                print("\n[✔] 智慧珞珈门户鉴权成功！正在抓取 zhlj Cookie...")
+                print("\n[OK] 智慧珞珈门户鉴权成功！正在保存会话...")
                 zhlj_cookie_list = context.cookies(urls=["https://zhlj.whu.edu.cn/"])
                 zhlj_cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in zhlj_cookie_list])
+                # 保存全部 Cookie（供后续 headless 浏览器注入）
+                saved_cookies = context.cookies()
                 break
 
-            time.sleep(0.5)  # 从 1 秒缩短到 0.5 秒
+            time.sleep(0.5)
             elapsed += 1
 
         if not zhlj_cookie_str:
             browser.close()
             raise TimeoutError("智慧珞珈登录超时或失败。")
 
-        # -------------------- 【步骤 2：拦截自习室 Token】 --------------------
+        # 关闭有头浏览器，后续全部用 headless
+        browser.close()
+        print("[OK] 登录完成，关闭交互窗口，切换为后台无头模式...")
+
+        # -------------------- 步骤 2：开 headless 浏览器，注入 Cookie 继续 --------------------
         captured_credentials = {"token": "", "hmac": "", "xdate": "", "xid": ""}
 
         def handle_request(request):
@@ -70,44 +76,41 @@ def interactive_whu_login() -> dict:
                 if xid:
                     captured_credentials["xid"] = xid
 
-        page.on("request", handle_request)
+        browser2 = p.chromium.launch(headless=True)
+        context2 = browser2.new_context()
+        context2.add_cookies(saved_cookies)
+        page2 = context2.new_page()
+        page2.on("request", handle_request)
 
-        # -------------------- 【步骤 3：图书馆系统】 --------------------
-        print("[✔] [后台免密流转 1/2] 正在通过图书馆 OAuth 重定向接口同步会话...")
+        # -------------------- 步骤 3：图书馆 OAuth 免密流转 --------------------
+        print("[OK] [后台免密流转 1/2] 正在通过图书馆 OAuth 重定向接口同步会话...")
         lib_oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
-        page.goto(lib_oauth_url)
+        page2.goto(lib_oauth_url)
 
         try:
-            page.wait_for_url(lambda url: "token=" in url, timeout=10000)  # 从 15 秒缩短到 10 秒
-            match = re.search(r"token=([^&]+)", page.url)
+            page2.wait_for_url(lambda url: "token=" in url, timeout=10000)
+            match = re.search(r"token=([^&]+)", page2.url)
             jwt_token = match.group(1) if match else ""
-            print(f"🎉 成功截获 JWT 授权密钥: {jwt_token[:20]}...")
+            print(f"[OK] 成功截获 JWT 授权密钥: {jwt_token[:20]}...")
         except Exception as e:
-            print(f"警告：未能自动从 URL 提取 JWT 密钥: {str(e)}")
+            print(f"[WARN] 未能自动从 URL 提取 JWT 密钥: {str(e)}")
             jwt_token = ""
 
-        # ================================================================
-        # Step 4: Visit educational system directly to harvest cookies
-        # ================================================================
-        print("[OK] [Step 4] Visiting jwgl.whu.edu.cn for educational cookies...")
-        page.goto("https://jwgl.whu.edu.cn/")
+        # -------------------- 步骤 4：访问教务系统收割 Cookie --------------------
+        print("[OK] [后台免密流转 2/2] 正在访问教务系统获取 Cookie...")
+        page2.goto("https://jwgl.whu.edu.cn/")
         try:
-            page.wait_for_load_state("domcontentloaded", timeout=15000)
-            print("[OK] Educational system page loaded.")
+            page2.wait_for_load_state("domcontentloaded", timeout=15000)
+            print("[OK] 教务系统页面加载完成。")
         except Exception as e:
-            print(f"[WARN] Load timeout: {e}")
+            print(f"[WARN] 教务系统加载超时: {e}")
 
-        # Brief wait to ensure cookies are written
-        #time.sleep(2)
-
-        # Collect all cookies before closing browser (for library_tool)
-        all_cookies = context.cookies()
-
-        # -------------------- Step 5: Harvest educational cookies --------------------
-        print("[OK] Harvesting educational system cookies...")
-        jwgl_cookie_list = context.cookies(urls=["https://jwgl.whu.edu.cn/"])
-        browser.close()
-        print("[✔] 浏览器已自动关闭。")
+        # 收集 Cookie + 收割教务系统 Cookie
+        all_cookies = context2.cookies()
+        print("[OK] 正在收割教务系统 Cookie...")
+        jwgl_cookie_list = context2.cookies(urls=["https://jwgl.whu.edu.cn/"])
+        browser2.close()
+        print("[OK] 浏览器已自动关闭。")
 
         jwgl_cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in jwgl_cookie_list])
 
