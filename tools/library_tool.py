@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
 from typing import Annotated
 from langgraph.prebuilt import InjectedState
+from .captcha_solver import solve_captcha
 
 # 武汉大学图书馆分馆大楼 19位雪花 ID 映射
 LIBRARY_MAPPING = {
@@ -253,7 +254,7 @@ def query_empty_seats_in_area(
             return f"【系统错误】：自习室地图构建异常: {str(e)}"
 
 
-# ==================== 3. 极速提交座位预约（addReserve 免滑块） ====================
+# ==================== 3. 极速提交座位预约（addReserve + 滑块验证码自动绕过） ====================
 @tool
 def reserve_library_seat(
     query_date: str,
@@ -264,9 +265,21 @@ def reserve_library_seat(
     end_time: str,
     state: Annotated[dict, InjectedState]
 ) -> str:
-    """自动将中文座位号转换为 19位 物理 ID，并调用学校 App 受信任绿色通道（addReserve）免滑块直接预约座位。"""
+    """自动将中文座位号转换为 19位 物理 ID，调用学校 App 受信任绿色通道预约座位。
+    如遇滑块验证码要求，自动调用 TAC 验证码破解引擎绕过。"""
     cookies = state.get("cookies", {})
     raw_cookies = cookies.get("library_cookie", [])
+    username = cookies.get("library_token", "2025302114221")
+    # 从 JWT 中提取学号
+    jwt = cookies.get("library_jwt_token", "")
+    if jwt:
+        import base64 as _b64
+        try:
+            payload = json.loads(_b64.b64decode(jwt.split(".")[1] + "==").decode())
+            username = payload.get("sub", username)
+        except:
+            pass
+
     target_name = "总馆"
     for name in LIBRARY_MAPPING.keys():
         if name in library_name:
@@ -288,6 +301,55 @@ def reserve_library_seat(
     except Exception as e:
         return f"【系统错误】：获取自习室登录会话失败: {str(e)}"
 
+    # 预约请求体
+    reserve_path = f"/jsq/static/frontApi/make/freeBook/{matched_seat_uuid}/{query_date}/{begin_minute}/{end_minute}"
+
+    def _do_add_reserve(page, cap_token=""):
+        """执行 freeBook API 调用"""
+        url = reserve_path
+        if cap_token:
+            url += f"?capToken={cap_token}"
+        eval_js = f"""
+        async () => {{
+            const response = await fetch('{url}', {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                    'token': '{creds["token"]}',
+                    'X-hmac-request-key': '{creds["hmac"]}',
+                    'X-request-date': '{creds["xdate"]}',
+                    'X-request-id': '{creds["xid"]}',
+                    'loginType': 'PC'
+                }},
+                body: JSON.stringify({{}})
+            }});
+            return await response.json();
+        }}
+        """
+        return page.evaluate(eval_js)
+
+    def _get_seat_id(page):
+        """将桌贴号转换为 19位 物理 ID"""
+        map_path = f"/jsq/static/frontApi/res/freeSeatIdsDuration/{area_id}/{query_date}"
+        eval_js = f"""
+        async () => {{
+            const response = await fetch('{map_path}', {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                    'token': '{creds["token"]}',
+                    'X-hmac-request-key': '{creds["hmac"]}',
+                    'X-request-date': '{creds["xdate"]}',
+                    'X-request-id': '{creds["xid"]}',
+                    'loginType': 'PC'
+                }},
+                body: JSON.stringify({{ "beginMinute": {begin_minute}, "endMinute": 0 }})
+            }});
+            return await response.json();
+        }}
+        """
+        return page.evaluate(eval_js)
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
@@ -299,75 +361,53 @@ def reserve_library_seat(
             page.goto(target_url, timeout=12000)
             page.wait_for_load_state("networkidle")
 
-            # 阶段 A：将桌贴号转换为 19位 物理 ID
-            map_path = f"/jsq/static/frontApi/res/freeSeatIdsDuration/{area_id}/{query_date}"
-            eval_map_js = f"""
-            async () => {{
-                const response = await fetch('{map_path}', {{
-                    method: 'POST',
-                    headers: {{
-                        'Content-Type': 'application/json',
-                        'token': '{creds["token"]}',
-                        'X-hmac-request-key': '{creds["hmac"]}',
-                        'X-request-date': '{creds["xdate"]}',
-                        'X-request-id': '{creds["xid"]}',
-                        'loginType': 'PC'
-                    }},
-                    body: JSON.stringify({{ "beginMinute": {begin_minute}, "endMinute": 0 }})
-                }});
-                return await response.json();
-            }}
-            """
-            map_json = page.evaluate(eval_map_js)
-            
+            # 阶段 A：座位号 → 物理 ID
+            map_json = _get_seat_id(page)
             matched_seat_uuid = ""
             seats_dict = map_json.get("data", {})
             for uuid, seat_info in seats_dict.items():
                 if seat_info.get("label") == seat_label:
                     matched_seat_uuid = uuid
                     break
-                    
+
             if not matched_seat_uuid:
                 browser.close()
                 return f"【预约失败】：在该时段内未找到可用的【{target_name}】{seat_label}号座位，可能已被他人占用。"
 
-            print(f"[✔] 座位对齐成功！桌号 {seat_label} 对应的 19位 ID 为: {matched_seat_uuid}")
+            print(f"[✔] 座位对齐成功！桌号 {seat_label} -> ID: {matched_seat_uuid}")
+            reserve_path = f"/jsq/static/frontApi/make/freeBook/{matched_seat_uuid}/{query_date}/{begin_minute}/{end_minute}"
 
-            # 阶段 B：提交 addReserve 极速免滑块预约 [1.2]
-            reserve_path = "/jsq/static/frontApi/res/addReserve"
-            eval_reserve_js = f"""
-            async () => {{
-                const response = await fetch('{reserve_path}', {{
-                    method: 'POST',
-                    headers: {{
-                        'Content-Type': 'application/json',
-                        'token': '{creds["token"]}',
-                        'X-hmac-request-key': '{creds["hmac"]}',
-                        'X-request-date': '{creds["xdate"]}',
-                        'X-request-id': '{creds["xid"]}',
-                        'loginType': 'PC'
-                    }},
-                    body: JSON.stringify({{
-                        "beginMinute": {begin_minute},
-                        "endMinute": {end_minute},
-                        "date": "{query_date}",
-                        "seatId": "{matched_seat_uuid}"
-                    }})
-                }});
-                return await response.json();
-            }}
-            """
-            res_json = page.evaluate(eval_reserve_js)
+            # 阶段 B：直接预约（无验证码）
+            res_json = _do_add_reserve(page)
+            msg = res_json.get("message", "")
+
+            # 阶段 C：触发验证码 → 自动破解 → 带 capToken 重试
+            if not res_json.get("status") and ("验证" in msg or "滑块" in msg or "captcha" in msg.lower()):
+                print(f"[!] 触发验证码: {msg}，正在自动破解...")
+                try:
+                    captcha_result = solve_captcha(username=username, max_retries=3)
+                    if captcha_result.get("success"):
+                        token = captcha_result.get("data", {}).get("token", "")
+                        if token:
+                            print(f"[✔] 验证码破解成功，重试预约...")
+                            res_json = _do_add_reserve(page, cap_token=token)
+                        else:
+                            print("[!] 验证码通过但未返回 token")
+                    else:
+                        print(f"[!] 验证码破解失败: {captcha_result}")
+                except Exception as ce:
+                    print(f"[!] 验证码破解异常: {ce}")
+
             browser.close()
 
             if res_json.get("status"):
-                return f"🎉 【预约成功】：已为您成功锁定【{target_name}】{query_date} {begin_time}~{end_time} 的 {seat_label}号座位！系统已为您自动在后台免滑块过检放行！"
+                return f"🎉 【预约成功】：已为您成功锁定【{target_name}】{query_date} {begin_time}~{end_time} 的 {seat_label}号座位！"
             else:
-                return f"❌ 【预约失败】：座位预约冲突，学校选座系统返回原因：'{res_json.get('message', '未知错误')}'。"
+                return f"❌ 【预约失败】：学校选座系统返回：'{res_json.get('message', '未知错误')}'。"
 
         except Exception as e:
             browser.close()
-            return f"【系统错误】：执行预约事务异常，原因: {str(e)}"
+            return f"【系统错误】：执行预约事务异常: {str(e)}"
 
 
 # ==================== 4. 查询当前预约记录与历史账单 ====================
@@ -535,3 +575,101 @@ def cancel_library_reservation(
         except Exception as e:
             browser.close()
             return f"【系统错误】：执行取消事务时发生未知异常: {str(e)}"
+
+
+# ==================== 6. 查询当前使用中座位 ====================
+@tool
+def get_current_usage(
+    state: Annotated[dict, InjectedState] = None
+) -> str:
+    """查询当前登录用户在图书馆正在使用中的座位（已签到入座），返回座位信息和剩余时间。"""
+    cookies = state.get("cookies", {})
+    raw_cookies = cookies.get("library_cookie", [])
+    print("--- [当前使用] 正在查询... ---")
+
+    try:
+        creds = _harvest_library_session(raw_cookies)
+    except Exception as e:
+        return f"【系统错误】：{str(e)}"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        context.add_cookies(raw_cookies)
+        page = context.new_page()
+        try:
+            page.goto(f"https://seat.lib.whu.edu.cn/seat/#/login?token={creds['jwt_token']}", timeout=12000)
+            page.wait_for_load_state("networkidle")
+            eval_js = f"""
+            async () => {{
+                const r = await fetch('/jsq/static/frontApi/user/currentUseMake', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'token': '{creds["token"]}',
+                        'X-hmac-request-key': '{creds["hmac"]}', 'X-request-date': '{creds["xdate"]}',
+                        'X-request-id': '{creds["xid"]}', 'loginType': 'PC' }},
+                    body: JSON.stringify({{}})
+                }});
+                return await r.json();
+            }}
+            """
+            res = page.evaluate(eval_js)
+            browser.close()
+            if not res.get("status"):
+                return f"【查询失败】：{res.get('message', '鉴权失效')}"
+            data = res.get("data", {})
+            if not data:
+                return "📭 当前没有正在使用中的座位。"
+            return (
+                f"🟢 【正在使用】\n"
+                f"  位置: {data.get('roomName','')} {data.get('seatLabel','')}号\n"
+                f"  日期: {data.get('date','')} | {data.get('beginTime','')}~{data.get('endTime','')}\n"
+                f"  预约单ID: `{data.get('id','')}`"
+            )
+        except Exception as e:
+            browser.close()
+            return f"【系统错误】：{str(e)}"
+
+
+# ==================== 7. 结束使用（签退） ====================
+@tool
+def stop_library_usage(
+    state: Annotated[dict, InjectedState] = None
+) -> str:
+    """结束当前正在使用的座位（签退释放）。调用前建议先用「查询当前使用」确认。"""
+    cookies = state.get("cookies", {})
+    raw_cookies = cookies.get("library_cookie", [])
+    print("--- [结束使用] 正在签退... ---")
+
+    try:
+        creds = _harvest_library_session(raw_cookies)
+    except Exception as e:
+        return f"【系统错误】：{str(e)}"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        context.add_cookies(raw_cookies)
+        page = context.new_page()
+        try:
+            page.goto(f"https://seat.lib.whu.edu.cn/seat/#/login?token={creds['jwt_token']}", timeout=12000)
+            page.wait_for_load_state("networkidle")
+            eval_js = f"""
+            async () => {{
+                const r = await fetch('/jsq/static/frontApi/make/stop', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'token': '{creds["token"]}',
+                        'X-hmac-request-key': '{creds["hmac"]}', 'X-request-date': '{creds["xdate"]}',
+                        'X-request-id': '{creds["xid"]}', 'loginType': 'PC' }},
+                    body: JSON.stringify({{}})
+                }});
+                return await r.json();
+            }}
+            """
+            res = page.evaluate(eval_js)
+            browser.close()
+            if res.get("status"):
+                return "🎉 【签退成功】座位已释放！"
+            return f"❌ 【签退失败】：{res.get('message', '未知错误')}"
+        except Exception as e:
+            browser.close()
+            return f"【系统错误】：{str(e)}"
