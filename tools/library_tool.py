@@ -2,6 +2,7 @@
 
 import time
 import re
+import json
 import traceback
 from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
