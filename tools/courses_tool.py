@@ -69,6 +69,7 @@ def query_whu_schedule(
     Returns:
         str: 格式化后的课程表报告
     """
+    print("成功调用课表查询工具");
     # -------------------- 1. 映射学期参数 --------------------
     xqm_code, semester_display = map_semester(semester)
 

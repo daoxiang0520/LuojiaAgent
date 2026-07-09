@@ -2,6 +2,7 @@
 
 import time
 import json
+import re
 import urllib3
 import requests
 from datetime import datetime
@@ -26,19 +27,11 @@ SEMESTER_MAP = {
 def map_semester(semester: str) -> tuple:
     """
     将用户传入的学期参数（1/2/3）转换为教务系统需要的 xqm 代码和显示名称。
-    
-    Args:
-        semester: "1", "2", "3"
-    
-    Returns:
-        (xqm_code, display_name): 如 ("12", "第二学期")
     """
     if semester not in SEMESTER_MAP:
-        # 如果传入的是 "12" 或 "3" 等代码，尝试反向查找
         for key, value in SEMESTER_MAP.items():
             if value["xqm"] == semester:
                 return value["xqm"], value["display"]
-        # 都不匹配，返回默认值
         return "3", "第一学期"
     info = SEMESTER_MAP[semester]
     return info["xqm"], info["display"]
@@ -58,7 +51,7 @@ def query_whu_exam_schedule(
     通过 LangGraph state 自动获取教务系统 Cookie。
 
     Args:
-        state: LangGraph 状态字典，包含 cookie_str（内含 jwgl_cookie_str）
+        state: LangGraph 状态字典，包含 cookies（内含 educational 字段）
         year: 学年，如 "2025" 表示 2025-2026 学年
         semester: 学期，传入 "1"=第一学期, "2"=第二学期, "3"=第三学期
 
@@ -68,15 +61,16 @@ def query_whu_exam_schedule(
     # -------------------- 1. 映射学期参数 --------------------
     xqm_code, semester_display = map_semester(semester)
 
-    # -------------------- 2. 提取 Cookie --------------------
-    cookie_data = state.get("cookie_str", {})
+    # -------------------- 2. 提取 Cookie（适配 agent.py 的 state） --------------------
+    # 【修复】与 courses_tool.py 保持一致
+    cookie_data = state.get("cookies", {})
     if isinstance(cookie_data, dict):
-        cookie_str = cookie_data.get("jwgl_cookie_str", "")
+        cookie_str = cookie_data.get("educational", "")
     else:
         cookie_str = cookie_data
 
     if not cookie_str:
-        return "【系统提示】未检测到教务系统 Cookie，请先调用 login_to_whu_portal 登录。"
+        return "【系统提示】未检测到教务系统 Cookie（educational），请先调用 login_to_whu_portal 登录。"
 
     if "JSESSIONID" not in cookie_str:
         return "【系统提示】Cookie 中缺少 JSESSIONID，请重新登录获取有效凭证。"
@@ -168,7 +162,6 @@ def format_exam_report(items: list, year: str, semester_display: str) -> str:
     """将考试数据格式化为可读报告"""
     cleaned_lines = []
     
-    # 按考试时间排序
     sorted_items = sorted(items, key=lambda x: x.get("kssj", ""))
 
     for course in sorted_items:
@@ -181,22 +174,17 @@ def format_exam_report(items: list, year: str, semester_display: str) -> str:
         xf = course.get("xf", "0")
         ksfs = course.get("ksfs", "")
 
-        # 提取教师姓名（jsxx 格式为 "工号/姓名"）
         teacher = ""
         if jsxx and "/" in jsxx:
             teacher = jsxx.split("/")[-1]
         elif jsxx:
             teacher = jsxx
 
-        # 组装地点信息
         location = cdmc
         if cdxqmc and cdxqmc not in location:
             location = f"{cdxqmc} {cdmc}"
 
-        # 组装座位信息
         seat_info = f" (座位号: {zwh})" if zwh else ""
-
-        # 组装考试方式
         exam_type = f" [{ksfs}]" if ksfs else ""
 
         cleaned_lines.append(
@@ -219,7 +207,7 @@ def format_exam_report(items: list, year: str, semester_display: str) -> str:
 
 
 # ==========================================================
-# 本地测试入口
+# 本地测试入口（与 agent.py 的 state 结构对齐）
 # ==========================================================
 if __name__ == "__main__":
     import sys
@@ -227,29 +215,26 @@ if __name__ == "__main__":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
     print("=" * 70)
-    print("【本地测试】考试安排 API 工具")
+    print("【本地测试】考试安排 API 工具（适配 agent.py state）")
     print("=" * 70)
 
     # ==================== 请替换为你的真实教务 Cookie ====================
-    # 从 login_helper.py 获取或从浏览器复制
     TEST_COOKIE = (
-        "_dx_uzZo5y=1772412944988EPSbTOS2Y6N9e7OiD3wIuZvCAcdG4ntE; "
-        "SF_cookie_1=87446532; "
-        "JSESSIONID=2FCAD8D720FBA53F26316E53C0E904DF; "
-        "_dx_captcha_vid=sl48niop5mrbuqt23"
+        "JSESSIONID=xxx; "
+        "SF_cookie_1=xxx"
     )
     # =====================================================================
 
+    # 【修复】与 courses_tool.py 和 agent.py 保持一致
     test_state = {
-        "cookie_str": {
-            "jwgl_cookie_str": TEST_COOKIE
+        "cookies": {
+            "educational": TEST_COOKIE
         }
     }
 
     print(f"\nCookie 预览: {TEST_COOKIE[:80]}...")
     print("-" * 70)
 
-    # 测试第一学期（传入 "1"）
     print("查询 2025-2026 学年第一学期考试安排...\n")
 
     try:
