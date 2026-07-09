@@ -1,4 +1,4 @@
-# grades_api_tool.py
+# grades_tool.py
 
 import requests
 import time
@@ -21,9 +21,6 @@ SEMESTER_MAP = {
     "2": {"xqm": "12", "display": "第二学期"},
     "3": {"xqm": "16", "display": "第三学期"},
 }
-
-# 反向映射（用于显示）
-XQM_TO_DISPLAY = {v["xqm"]: v["display"] for v in SEMESTER_MAP.values()}
 
 
 def map_semester(semester: str) -> tuple:
@@ -61,7 +58,7 @@ def query_whu_grades_realtime(
     通过 LangGraph state 自动获取教务系统 Cookie。
 
     Args:
-        state: LangGraph 状态字典，包含 cookie_str（内含 jwgl_cookie_str）
+        state: LangGraph 状态字典，包含 cookies（内含 educational 字段）
         year: 学年，如 "2025" 表示 2025-2026 学年
         semester: 学期，传入 "1"=第一学期, "2"=第二学期, "3"=第三学期
 
@@ -71,15 +68,16 @@ def query_whu_grades_realtime(
     # -------------------- 1. 映射学期参数 --------------------
     xqm_code, semester_display = map_semester(semester)
 
-    # -------------------- 2. 提取 Cookie --------------------
-     # 1. 从状态机获取分类 cookies 字典
-    cookies = state.get("cookies", {})
-    
-    # 2. 精准获取我们在 login_helper 中定义好的 "educational" 键 (也就是教务系统的 Cookie 字符串) [2, 3]
-    cookie_str = cookies.get("educational")
+    # -------------------- 2. 提取 Cookie（适配 agent.py 的 state） --------------------
+    # 与 courses_tool.py 保持一致：从 cookies.educational 取
+    cookie_data = state.get("cookies", {})
+    if isinstance(cookie_data, dict):
+        cookie_str = cookie_data.get("educational", "")
+    else:
+        cookie_str = cookie_data
 
     if not cookie_str:
-        return "【系统提示】未检测到教务系统 Cookie，请先调用 login_to_whu_portal 登录。"
+        return "【系统提示】未检测到教务系统 Cookie（educational），请先调用 login_to_whu_portal 登录。"
 
     if "JSESSIONID" not in cookie_str:
         return "【系统提示】Cookie 中缺少 JSESSIONID，请重新登录获取有效凭证。"
@@ -110,12 +108,13 @@ def query_whu_grades_realtime(
     # ==================== 【重要】validate 令牌 ====================
     # 该值从浏览器抓包获取，与 JSESSIONID 绑定。
     # 如果过期，需要从浏览器重新抓取更新。
+    # 注意：成绩接口的 validate 与考试接口不同，需要单独抓取
     VALIDATE_TOKEN = "sl4fz4ckumrbtqq6j:"
     # ============================================================
 
     payload = {
         "xnm": year,
-        "xqm": xqm_code,  # 使用映射后的 xqm 代码
+        "xqm": xqm_code,
         "sfzgcj": "",
         "validate": VALIDATE_TOKEN,
         "kcbj": "",
@@ -233,7 +232,7 @@ def format_grade_report(items: list, year: str, semester_display: str) -> str:
 
 
 # ==========================================================
-# 本地测试入口
+# 本地测试入口（与 agent.py 的 state 结构对齐）
 # ==========================================================
 if __name__ == "__main__":
     import sys
@@ -241,19 +240,22 @@ if __name__ == "__main__":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
     print("=" * 70)
-    print("【本地测试】成绩 API 工具")
+    print("【本地测试】成绩 API 工具（适配 agent.py state）")
     print("=" * 70)
 
     # ==================== 请替换为你的真实教务 Cookie ====================
+    # 成绩接口需要 validate 参数，所以可以保留完整的 Cookie（含 _dx_captcha_vid）
     TEST_COOKIE = (
-        "JSESSIONID=   ; "
-        "SF_cookie_1=  "
+        "JSESSIONID=xxx; "
+        "SF_cookie_1=xxx"
     )
     # =====================================================================
 
+    # 【关键修复】与 agent.py 的 state 结构保持一致
+    # agent.py 使用 state["cookies"]，其中 educational 存放教务系统 Cookie
     test_state = {
-        "cookie_str": {
-            "jwgl_cookie_str": TEST_COOKIE
+        "cookies": {
+            "educational": TEST_COOKIE
         }
     }
 
@@ -267,7 +269,7 @@ if __name__ == "__main__":
         result = query_whu_grades_realtime.invoke({
             "state": test_state,
             "year": "2025",
-            "semester": "1"   # 直接传入 "2" 即可
+            "semester": "2"
         })
 
         print("=" * 70)
