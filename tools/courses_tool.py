@@ -69,7 +69,6 @@ def query_whu_schedule(
     Returns:
         str: 格式化后的课程表报告
     """
-    print("成功调用课表查询工具");
     # -------------------- 1. 映射学期参数 --------------------
     xqm_code, semester_display = map_semester(semester)
 
@@ -278,8 +277,8 @@ if __name__ == "__main__":
     # ==================== 请替换为你的真实教务 Cookie ====================
     TEST_COOKIE = (
         "_dx_uzZo5y=1772412944988EPSbTOS2Y6N9e7OiD3wIuZvCAcdG4ntE; "
-        "SF_cookie_1=87446532; "
-        "JSESSIONID=2FCAD8D720FBA53F26316E53C0E904DF; "
+        "JSESSIONID=F5F5A2668451E05B1C02437547CFA7B6; "
+        "SF_cookie_1=87446532;"
         "_dx_captcha_vid=sljhlbk8mrcv048y"
     )
     # =====================================================================
@@ -349,7 +348,7 @@ if __name__ == "__main__":
         result = query_whu_schedule.invoke({
             "state": test_state,
             "year": "2025",
-            "semester": "3"
+            "semester": "2"
         })
 
         print("=" * 70)
