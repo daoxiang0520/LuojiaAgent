@@ -11,14 +11,13 @@ from typing import Annotated
 
 def interactive_whu_login() -> dict:
     """
-    一键登录，多路静默并发收割。
-    模拟真实用户路径：智慧珞珈登录 → 点击“本科教务”图标 → 切换到新标签页 → 收割 Cookie。
+    一键登录，多路静默并发收割。\n    流程：智慧珞珈登录 → 图书馆OAuth免密流转 → 直接访问jwgl获取教务Cookie。
     """
     print("\n" + "=" * 60)
     print("【双路凭证收割器】正在启动浏览器...")
     print(" 1. 请在弹出的窗口中手动扫码/密码登录【智慧珞珈】。")
-    print(" 2. 登录成功后，程序将自动点击【本科教务】图标。")
-    print(" 3. 程序会自动切换到教务系统标签页，等待加载完成后收割 Cookie。")
+    print(" 2. 登录成功后，程序将自动通过 OAuth 同步图书馆会话。")
+    print(" 3. 程序会自动访问教务系统，收割 Cookie。")
     print(" 4. 运行结束时，控制台将高亮输出两套完整的 Cookie 串。")
     print("=" * 60 + "\n")
 
@@ -87,123 +86,25 @@ def interactive_whu_login() -> dict:
             print(f"警告：未能自动从 URL 提取 JWT 密钥: {str(e)}")
             jwt_token = ""
 
-        # 等待自习室 Token（最多 5 秒，从 10 秒缩短）
-        for _ in range(10):
-            if captured_credentials["token"]:
-                print("🎉 成功截获自习室核心 48位 会话 Token 凭证！")
-                break
-            time.sleep(0.5)
-        else:
-            print("⚠️ 未能截获自习室 Token（继续执行）")
-
         # ================================================================
-        # 【步骤 4：回到智慧珞珈 → 点击“本科教务”】
+        # Step 4: Visit educational system directly to harvest cookies
         # ================================================================
-        print("[✔] [后台免密流转 2/2] 正在返回智慧珞珈主页...")
-        page.goto("https://zhlj.whu.edu.cn/")
-        page.wait_for_load_state("domcontentloaded", timeout=10000)  # 从 networkidle 改为 domcontentloaded，更快
-
-        print("[✔] 正在查找并点击【本科教务】图标...")
-
-        # 点击本科教务（尝试时间从 10 秒缩短到 5 秒）
-        click_success = False
-        locators = [
-            ("li:has-text('本科教务')", "文本定位"),
-            (".application-list-item:has-text('本科教务')", "class 组合定位"),
-            ("li.application-list-item div.name:has-text('本科教务')", "父容器定位"),
-            ("//div[contains(text(),'本科教务')]/ancestor::li", "XPath 定位"),
-        ]
-
-        for loc, desc in locators:
-            try:
-                page.click(loc, timeout=3000)
-                print(f"[✔] 点击成功（{desc}）。")
-                click_success = True
-                break
-            except:
-                continue
-
-        if not click_success:
-            print("⚠️ 自动点击失败，请手动点击【本科教务】图标。")
-
-        # ================================================================
-        # 【步骤 5：检测并切换到新标签页】
-        # ================================================================
-        print("[✔] 等待新标签页打开...")
-
-        jwgl_page = None
-        start_time = time.time()
-        while time.time() - start_time < 20:  # 从 15 秒延长到 20 秒（给手动点击留时间）
-            pages = context.pages
-            if len(pages) > 1:
-                jwgl_page = pages[-1]
-                print(f"[✔] 检测到新标签页: {jwgl_page.url}")
-                break
-
-            # 如果自动点击失败，每 5 秒提示一次
-            if not click_success and int(time.time() - start_time) % 5 == 0:
-                print(f"⏳ 请手动点击【本科教务】... ({int(time.time() - start_time)}秒)")
-
-            time.sleep(0.5)
-
-        if jwgl_page is None:
-            print("⚠️ 未检测到新标签页，尝试检查当前页面...")
-            pages = context.pages
-            if len(pages) > 0:
-                jwgl_page = pages[0]
-                print(f"当前页面 URL: {jwgl_page.url}")
-
-        if jwgl_page:
-            page = jwgl_page
-            page.bring_to_front()
-            print(f"[✔] 已切换到教务系统标签页: {page.url}")
-        else:
-            raise Exception("无法找到教务系统标签页，请检查是否成功跳转。")
-
-        # ================================================================
-        # 【步骤 6：等待教务系统加载完成】
-        # ================================================================
-        print("[✔] 等待教务系统页面加载...")
-
-        # 等待网络空闲（保留此环节，但缩短超时）
+        print("[OK] [Step 4] Visiting jwgl.whu.edu.cn for educational cookies...")
+        page.goto("https://jwgl.whu.edu.cn/")
         try:
-            page.wait_for_load_state("networkidle", timeout=15000)  # 从 20 秒缩短到 15 秒
-            print("[✔] 页面网络空闲，教务系统加载完成。")
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            print("[OK] Educational system page loaded.")
         except Exception as e:
-            print(f"⚠️ 网络空闲等待超时: {e}")
+            print(f"[WARN] Load timeout: {e}")
 
-        # 检测教务系统的标志性元素（快速检测，不阻塞）
-        try:
-            page.wait_for_selector("text='本科教务管理系统'", timeout=5000)  # 从 10 秒缩短到 5 秒
-            print("[✔] 检测到教务系统标题。")
-        except:
-            pass
+        # Brief wait to ensure cookies are written
+        #time.sleep(2)
 
-        try:
-            page.wait_for_selector("text='退出'", timeout=3000)  # 从 5 秒缩短到 3 秒
-            print("[✔] 检测到退出按钮。")
-        except:
-            pass
-
-        # 打印当前页面信息
-        try:
-            print(f"[✔] 当前页面 URL: {page.url}")
-            print(f"[✔] 当前页面标题: {page.title()}")
-        except:
-            pass
-
-        # 等待顶象脚本初始化（从 5 秒缩短到 3 秒）
-        print("[✔] 等待顶象验证码脚本初始化...")
-        time.sleep(3)
-
-        # 打印 Cookie 统计（调试用）
+        # Collect all cookies before closing browser (for library_tool)
         all_cookies = context.cookies()
-        print(f"\n当前浏览器共有 {len(all_cookies)} 个 Cookie")
-        dx_cookies = [c for c in all_cookies if c['name'].startswith('_dx')]
-        print(f"其中顶象 Cookie (_dx_*) 有 {len(dx_cookies)} 个: {[c['name'] for c in dx_cookies]}")
 
-        # -------------------- 【步骤 7：收割完整 Cookie】 --------------------
-        print("[✔] 正在收割教务系统 Cookie...")
+        # -------------------- Step 5: Harvest educational cookies --------------------
+        print("[OK] Harvesting educational system cookies...")
         jwgl_cookie_list = context.cookies(urls=["https://jwgl.whu.edu.cn/"])
         browser.close()
         print("[✔] 浏览器已自动关闭。")
