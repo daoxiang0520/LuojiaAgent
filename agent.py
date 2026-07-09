@@ -165,25 +165,3 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
                             "type": "final_answer",
                             "content": last_msg.content
                         }
-
-
-
-# ---- 本地运行测试 ----
-if __name__ == "__main__":
-    import sys
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
-    print("=== LuojiaAgent 登录流闭环本地运行测试 ===")
-    
-    # 初始化状态，此时 cookie_str 为空
-    inputs = {"messages": [("user", "帮我查一下明天的课表")]}
-    
-    # 第一次运行：大模型会发现【未登录】，并自动调用 login_to_whu_portal 弹窗登录
-    config = {"configurable": {"thread_id": "test_session_1"}}
-    for event in app.stream(inputs, config=config):
-        for key, value in event.items():
-            print(f"\n-> [当前执行节点: {key}]")
-            if "messages" in value:
-                last_msg = value["messages"][-1]
-                print(f"输出内容: {last_msg.content}")
