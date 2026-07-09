@@ -33,6 +33,7 @@ def get_system_date_prompt() -> str:
         f"你必须以此时间锚点为基准，在脑中换算出绝对的 YYYY-MM-DD 格式，再将换算后的绝对日期作为参数传给工具。"
         f"绝对不允许使用已经过去的年份或臆造的日期。"
     )
+
     return date_prompt
 
 # 导入所有统一打包的工具
@@ -66,8 +67,13 @@ def _load_api_key() -> str:
     return os.getenv("DEEPSEEK_API_KEY", "")
 
 llm = ChatOpenAI(
+<<<<<<< HEAD
     model="deepseek-chat",
     openai_api_key=_load_api_key(),
+=======
+    model="deepseek-chat", 
+    openai_api_key="sk-4ef78b546ebb4d6dae12c1de5f17d734",
+>>>>>>> 8e87a5d2348419729a268ea20cc93bcd007aa57c
     openai_api_base="https://api.deepseek.com",
     temperature=0.1
 )
@@ -82,13 +88,20 @@ def call_model(state: AgentState):
     date_anchor_prompt = get_system_date_prompt()
     
     system_prompt = SystemMessage(content=(
-        f"你是一个高校校园生活智能助手。当前系统登录状态：【{is_logged_in}】。\n\n"
-        f"当前日期：{date_anchor_prompt}\n\n"
-        "你能够通过调用工具帮学生查询真实课程表、查询和预约学校图书馆/体育馆、以及查询校园天气。\n"
-        "1. 如果系统状态为【未登录】，且用户想要查询课表或预约，你必须【首先调用 login_to_whu_portal 工具】引导用户登录。\n"
-        "2. 不要凭空编造任何数据，必须通过调用对应工具获取真实数据。\n"
-        "3. 你的回答应当礼貌、简洁。"
-        
+    f"你是一个武大校园生活助手。当前登录状态：【{is_logged_in}】。\n\n"
+    f"当前日期：{date_anchor_prompt}\n\n"
+    "绝对不允许使用已经过去的年份或臆造的日期。\n"
+    
+    "【核心规则】\n"
+    "用户提到出门/自习/图书馆/体育馆时，必须先查课表,确定要出行再查天气,最后执行请求。\n"
+    "• 有课 → 提醒用户（课程名、时间、地点），询问是否确认出门\n"
+    "• 没课 → 正常推进\n"
+    "• 用户说「逃课/不用查课表」时跳过课表检查\n\n"
+    
+    "【输出要求】\n"
+    "用流畅自然的对话方式回应，并且简洁明了，不要用「第一步/第二步」等机械步骤描述。\n"
+    "对于不清楚，未经准确查证的关于课程、考试、座位等等相关的信息不得编造（例如：不要未查证就告诉用户这是最后一节课。）\n"
+    "对于关于校园生活的其他问题，无对应调用工具时可以结合自身训练数据训练搜索，但必须提示这是结合自身训练数据得出的，不一定准确（例如：武大哪个食堂好吃）\n"
     ))
     full_messages = [system_prompt] + list(messages)
     response = llm_with_tools.invoke(full_messages)
