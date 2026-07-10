@@ -1,40 +1,116 @@
+# LuojiaAgent — 武大校园智能助手
 
----
+基于 **LangGraph + DeepSeek V4 Pro** 的多智能体系统，覆盖课表、成绩、考试、图书馆座位、天气五大校园场景。
 
-# 选题及团队组建报告
+## 架构
 
-## 一、 选题基本信息
+```
+Streamlit 前端 ←→ LangGraph Agent (DeepSeek V4 Pro + 深度思考)
+                      │
+            ┌─────────┼─────────┐
+            ▼         ▼         ▼
+        login_helper  courses   library
+        (CAS 登录)    grades    weather
+                      exams
+```
 
-| 选题要素                       | 基本信息说明                                                 |
-| :----------------------------- | :----------------------------------------------------------- |
-| **项目题目**                   | 基于大语言模型与 LangGraph 的校园生活智能体系统              |
-| **项目难易度**                 | 高                                                           |
-| **特定业务场景**               | **面向高校学生日常学习与生活的辅助场景。** 本项目旨在解决高校学生在日常校园生活中面临的信息分散、事务处理流程繁琐等问题。系统将围绕学生课表日程、成绩绩点管理以及校园公共资源（如图书馆、体育场馆等）的查询与预约等高频校园事务展开。 |
-| **技术栈选型**                 | **开发语言**：Python<br>**智能体框架**：LangGraph（用于构建多轮交互与状态流转图）<br>**大语言模型**：主流支持函数调用的国产或开源大模型 API<br>**前端界面**：Streamlit Web 框架（用于可视化交互）<br>**版本控制**：Git 团队协作工具 |
-| **核心创新与<br>拟解决的痛点** | 传统的校园查询工具功能单一、交互生硬，学生需要手动在多个系统间切换并自行核对时间冲突。 本项目拟通过**智能体（Agent）的状态机架构**，使系统能够理解复杂的日常自然语言，自动将用户的长文本指令分解为多个子任务，并根据执行结果动态调整后续步骤。例如：在帮用户预订场馆时，系统能自动比对用户的日程冲突，并自适应给出替代建议，体现“理解-规划-执行-观察-调整”的闭环能力。 |
+- **LLM**: `deepseek-v4-pro`（支持 thinking + function calling 一体）
+- **Agent**: LangGraph `StateGraph`，MemorySaver 会话管理
+- **前端**: Streamlit，日/夜双主题，语音朗读
 
----
+## 工具列表
 
-## 二、 成员名单、各成员角色及任务分配
+| 工具 | 功能 | 认证 |
+|:---|:---|:---|
+| `login_to_whu_portal` | CAS 统一身份认证 | Playwright 弹窗登录 |
+| `query_whu_schedule` | 课表查询 | 教务 JSESSIONID |
+| `query_whu_grades_realtime` | 成绩查询 | 教务 JSESSIONID |
+| `query_whu_exam_schedule` | 考试安排 | 教务 JSESSIONID |
+| `query_library_seats` | 分馆座位大盘 | HMAC 签名 |
+| `query_empty_seats_in_area` | 区域座位图 | HMAC 签名 |
+| `reserve_library_seat` | 预约座位（自动破解验证码） | HMAC 签名 |
+| `query_user_reservations` | 预约记录 | HMAC 签名 |
+| `cancel_library_reservation` | 取消预约 | HMAC 签名 |
+| `get_current_usage` | 当前使用中座位 | HMAC 签名 |
+| `stop_library_usage` | 签退释放 | HMAC 签名 |
+| `get_whu_rain_forecast` | 珞珈山天气 | 无 |
 
-团队共有 4 名成员。根据项目需求，分工明确为“1人负责前端、1人负责智能体逻辑、2人负责底层的校园服务工具实现”。
+## 快速开始
 
-### 1. 成员分工一览表
+### 1. 安装
 
-| 组员                 | 承担角色                                    | 核心任务分配                                                 |
-| :------------------- | :------------------------------------------ | :----------------------------------------------------------- |
-| **学生 A<br>(组长)** | **智能体架构设计**<br>(LangGraph 逻辑开发)  | 1. 负责设计智能体的状态存储方案（State Schema）与会话管理；<br>2. 负责基于 LangGraph 编写核心路由控制流，定义节点和条件跳转关系；<br>3. 负责对接大模型 API，调试提示词与函数调用（Function Calling）接口，确保意图识别的准确性；<br>4. 编写异常处理机制，防止大模型陷入工具死循环。 |
-| **学生 B**           | **前端开发与可视化**<br>(Streamlit UI 交互) | 1. 负责使用 Streamlit 搭建系统的 Web 可视化交互界面；<br>2. 设计学生个人数据看板，直观展示用户当前的校园资产与行程状态；<br>3. 负责聊天框的交互渲染；<br>4. 实现智能体执行步骤（如思考过程、工具调用细节、结果反馈）的动态展开，提升运行透明度。 |
-| **学生 C**           | **核心工具开发 A**<br>(教务与学业服务)      | 1. 负责设计与实现教务、成绩等数据的本地模拟存储；<br>2. 实现学期课程日程查询、绩点学分计算以及往届数据检索等工具；<br>3. 负责为大模型提供符合标准规范的工具接口定义与入参说明。 |
-| ****学生 D**         | **核心工具开发 B**<br>(资源与场馆服务)      | 1. 负责设计与实现校园资源、公共场馆状态的本地模拟存储；<br>2. 实现图书馆座位筛选与预订、体育场馆状态同步等工具；<br>3. 编写后台逻辑，实现时间和地点上的冲突碰撞检测算法，向智能体反馈校验结果。 |
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+```
 
----
+### 2. 配置 API Key
 
-## 三、 团队协同与开发流程
+```bash
+echo "sk-your-deepseek-key" > api.key
+```
 
-在项目开发过程中，团队将采用并行开发与分阶段集成的策略，保证系统各部分的平稳对接：
+### 3. 启动
 
-1.  **接口先行**：开发初期，核心工具开发人员（学生 C、D）将与智能体逻辑开发人员（学生 A）共同定义工具的参数输入与结果输出格式。
-2.  **并行研发**：在接口规范确立后，工具实现、大模型控制图以及前端 Web 界面可同步进行本地开发。
-3.  **系统集成**：中期进行前后端联调，将 LangGraph 的流式输出接入 Streamlit UI，展示完整的思考与工具调用链。
-4.  **测试与验证**：由全组协作，设计包含直接回答、多轮对话、复合任务、冲突输入在内的测试用例，统计智能体的任务完成率与工具调用准确率。
+```bash
+streamlit run app.py
+```
+
+### Docker
+
+```bash
+docker compose up -d
+```
+
+## 项目结构
+
+```
+LuojiaAgent/
+├── agent.py              # LangGraph 智能体（StateGraph + LLM + 路由）
+├── app.py                # Streamlit 前端
+├── api.key               # DeepSeek API 密钥
+├── requirements.txt      # Python 依赖
+├── Dockerfile            # Docker 镜像
+├── docker-compose.yml    # 一键部署
+│
+└── tools/
+    ├── __init__.py        # 工具统一导出（ALL_TOOLS）
+    ├── login_helper.py    # CAS 登录 + 凭证收割
+    ├── courses_tool.py    # 课表查询
+    ├── grades_tool.py     # 成绩查询
+    ├── exam_tool.py       # 考试安排
+    ├── library_tool.py    # 图书馆全套（HMAC 签名 + 验证码破解 + CAS SSO）
+    ├── weather_tool.py    # Open-Meteo 天气
+    ├── captcha_solver.py  # TAC 验证码破解（OpenCV + AES/RSA）
+    └── captcha_refs.npz   # 验证码参考图库
+```
+
+## 图书馆 API 技术细节
+
+### 认证链路
+
+```
+CAS 登录 → CASTGC → 图书馆 OAuth → JWT → auth/cas → sessionStorage token + hmacKey
+```
+
+### HMAC 签名
+
+```
+sign_str = "seat::{UUID}::{timestamp_ms}::{METHOD}"
+signature = HMAC-SHA256(sign_str, hmacKey).hex()
+```
+
+`hmacKey` 以 AES-128-CBC 加密存储在 `sessionStorage['jsq_p-systemInfo']`，解密密钥 `server_date_time`、IV `client_date_time`。
+
+### 调用策略
+
+- **Layer 1**: 纯 HTTP + HMAC 签名（~0.5s）
+- **Layer 2**: Playwright headless 刷新凭证（~5s，token 过期时）
+
+## 反向代理项目
+
+图书馆 API 逆向分析、验证码破解、HMAC 算法详见 [whu-lib-api](https://github.com/daoxiang0520/whu-lib-api)。
+
+## License
+
+MIT
