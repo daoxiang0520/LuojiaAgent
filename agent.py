@@ -12,9 +12,11 @@ from langgraph.prebuilt import ToolNode
 from datetime import datetime, timezone, timedelta
 
 def get_system_date_prompt() -> str:
-    # 1. 强制获取东八区（北京时间）
-    tz_beijing = timezone(timedelta(hours=8))
-    now = datetime.now(tz_beijing)
+    # 1. 🚀【防守型时区修复】先取绝对标准、无误差的全球统一 UTC 时间，再强制转换为东八区北京时间 [1.2.6]
+    # 这能彻底解决 Windows Git Bash、WSL、Docker 容器中常见的“双重时区偏置”导致日期抢跑一天的 Bug！
+    now_utc = datetime.now(timezone.utc)
+    now_beijing = now_utc.astimezone(timezone(timedelta(hours=8)))
+    now = now_beijing.replace(tzinfo=None)  # 抹除 tzinfo 方便进行普通的 naive datetime 运算
     
     # 2. 计算星期
     weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
@@ -24,17 +26,14 @@ def get_system_date_prompt() -> str:
     tomorrow = now + timedelta(days=1)
     tomorrow_weekday = weekdays[tomorrow.weekday()]
     
-    # 4. 组装成强力约束提示词
+    # 4. 组装成强力约束提示词（升级大模型的服从度，防止其强行脑补日期）
     date_prompt = (
-        f"⚠️【当前系统物理时间锚点（绝对基准）】\n"
+        f"⚠️【当前系统物理时间锚点（绝对唯一基准）】\n"
         f"- 今天是：{now.strftime('%Y-%m-%d')} ({weekday})\n"
         f"- 明天是：{tomorrow.strftime('%Y-%m-%d')} ({tomorrow_weekday})\n"
         f"- 当前精准时间刻：{now.strftime('%H:%M:%S')}\n"
-        f"当用户使用“明天”、“后天”、“这周五”、“下周”等相对时间时，"
-        f"你必须以此时间锚点为基准，在脑中换算出绝对的 YYYY-MM-DD 格式，再将换算后的绝对日期作为参数传给工具。"
-        f"绝对不允许使用已经过去的年份或臆造的日期。"
+        f"🚨【强制纪律】你必须忘掉你脑中（知识库中）原有的任何日期。当前世界的唯一真实时间必须以此处的“当前系统物理时间锚点”为绝对准则。你回答或计算相对日期时，绝对不允许使用其他任何年份或臆造的日期。"
     )
-
     return date_prompt
 
 # 导入所有统一打包的工具

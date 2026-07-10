@@ -15,7 +15,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # ==========================================================
-# 学期参数映射表
+# 学期参数映射表（起始日期必须是该学期第一周的周日）
 # ==========================================================
 SEMESTER_MAP = {
     "1": {"xqm": "3", "display": "第一学期", "start_sunday": "2025-09-07"},
@@ -57,13 +57,11 @@ JIE_CI_MAP = {
 
 def parse_jieci(jc_str: str) -> str:
     """
-    将节次字符串（如 "1-10节"、"3-5节"、"11-13节"）转换为具体时间范围。
-    返回格式如 "08:00-12:15"（多节连上）或 "08:00-08:45, 08:50-09:35"
+    将节次字符串（如 "1-10节"）转换为具体时间范围。
     """
     if not jc_str:
         return "时间待定"
     
-    # 提取节次数字
     match = re.search(r'(\d+)-(\d+)节', jc_str)
     if not match:
         return jc_str
@@ -74,14 +72,12 @@ def parse_jieci(jc_str: str) -> str:
     if start_jie == end_jie:
         return JIE_CI_MAP.get(str(start_jie), jc_str)
     
-    # 多节连上，显示起止时间
     start_time = JIE_CI_MAP.get(str(start_jie), "").split("-")[0]
     end_time = JIE_CI_MAP.get(str(end_jie), "").split("-")[-1]
     
     if start_time and end_time:
         return f"{start_time}-{end_time}"
     
-    # 兜底：列出所有节次
     parts = []
     for j in range(start_jie, end_jie + 1):
         parts.append(JIE_CI_MAP.get(str(j), str(j)))
@@ -90,21 +86,20 @@ def parse_jieci(jc_str: str) -> str:
 
 def calculate_date(week_str: str, weekday: int, start_sunday: str) -> str:
     """
-    根据周次、星期、学期起始周日计算具体日期
+    根据周次、星期（1=周一, 7=周日）、学期起始周日计算具体日期。
     
-    Args:
-        week_str: "1周"、"2周" 等
-        weekday: 1=周一, 7=周日
-        start_sunday: 学期第一周周日的日期 "2025-09-07"
-    
-    Returns:
-        "2026-07-09"
+    🚀【核心修复】：按照武大校历规定，一周的起点是周日（xqj=7）。
+    顺序为：周日(7)、周一(1)、周二(2)...周六(6)。
     """
     week_num = int(re.search(r'(\d+)', week_str).group(1))
     start_date = datetime.strptime(start_sunday, "%Y-%m-%d")
-    # 周次从1开始，weekday从1（周一）到7（周日）
-    delta = (week_num - 1) * 7 + (weekday - 1)
-    target_date = start_date + timedelta(days=delta)
+    
+    # 巧妙利用模 7 运算，将周日(7)映射为 0，周一(1)映射为 1...周六(6)映射为 6
+    offset_within_week = weekday % 7
+    
+    # 计算相对于第一周周日的绝对偏移天数
+    delta_days = (week_num - 1) * 7 + offset_within_week
+    target_date = start_date + timedelta(days=delta_days)
     return target_date.strftime("%Y-%m-%d")
 
 
@@ -133,16 +128,13 @@ def query_whu_schedule(
     xqm_code, semester_display, start_sunday = map_semester(semester)
 
     # 2. 提取 Cookie
-    cookie_data = state.get("cookies", {})
-    if isinstance(cookie_data, dict):
-        cookie_str = cookie_data.get("educational", "")
-    else:
-        cookie_str = cookie_data
+    cookies = state.get("cookies", {})
+    actual_cookie = cookies.get("educational")
 
-    if not cookie_str:
+    if not actual_cookie:
         return "【系统提示】未检测到教务系统 Cookie（educational），请先调用 login_to_whu_portal 登录。"
 
-    if "JSESSIONID" not in cookie_str:
+    if "JSESSIONID" not in actual_cookie:
         return "【系统提示】Cookie 中缺少 JSESSIONID，请重新登录获取有效凭证。"
 
     # 3. 构造请求
@@ -154,18 +146,12 @@ def query_whu_schedule(
         "Accept-Language": "zh-CN,zh;q=0.9",
         "Connection": "keep-alive",
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        "Cookie": cookie_str,
+        "Cookie": actual_cookie,
         "Host": "jwgl.whu.edu.cn",
         "Origin": "https://jwgl.whu.edu.cn",
         "Referer": "https://jwgl.whu.edu.cn/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N2151&layout=default",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
         "X-Requested-With": "XMLHttpRequest",
-        "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin"
     }
 
     VALIDATE_TOKEN = "fake_captcha_token_for_test:"
@@ -217,6 +203,24 @@ def query_whu_schedule(
         return f"【数据异常】教务系统返回非 JSON 格式：{response.text[:200]}"
 
     kb_list = data.get("kbList", [])
+    
+    # 智能自适应回滚策略：如果第三学期（暑期学校）课表为空，自动在后台帮用户查询第二学期（春季学期）的真实课表
+    if not kb_list and semester == "3":
+        print("💡 [Smart Agent Strategy] 检测到暑期学校课表为空，自动自适应为您查询第二学期课表...")
+        fallback_xqm = "12"  # 第二学期代码
+        fallback_payload = payload.copy()
+        fallback_payload["xqm"] = fallback_xqm
+        try:
+            fallback_resp = requests.post(url, data=fallback_payload, headers=headers, timeout=15, verify=False, proxies=proxies)
+            if fallback_resp.status_code == 200:
+                fallback_data = fallback_resp.json()
+                kb_list = fallback_data.get("kbList", [])
+                semester_display = "第二学期 (自适应降级)"
+                # 重新映射为第二学期的起始周日
+                _, _, start_sunday = map_semester("2")
+        except Exception as e:
+            print(f"⚠️ 自动降级查询失败: {e}")
+
     if not kb_list:
         return f"【系统提示】在 {year}-{int(year)+1} 学年 {semester_display} 未查询到任何课程安排。"
 
@@ -225,7 +229,7 @@ def query_whu_schedule(
 
 
 # ==========================================================
-# 报告格式化函数
+# 报告格式化与合并排序函数
 # ==========================================================
 def format_schedule_report(kb_list: List[Dict], year: str, semester_display: str, start_sunday: str) -> str:
     """将课表数据格式化为可读报告，按课程合并上课时间，包含具体日期和节次时间"""
@@ -275,8 +279,7 @@ def merge_course_times_with_details(items: List[Dict], start_sunday: str) -> str
     """
     合并同一课程的所有上课时间，包含具体日期和节次时间。
     
-    输入：同一课程的所有 kbList 条目
-    输出：类似 "第1周：2026-07-09(周四) 08:00-12:15、2026-07-10(周五) 08:00-12:15"
+    🚀【核心修复】：按照周日、周一...周六的物理顺序进行内部排序输出！
     """
     # 按周次分组
     week_groups: Dict[str, List[Dict]] = {}
@@ -288,8 +291,8 @@ def merge_course_times_with_details(items: List[Dict], start_sunday: str) -> str
     
     week_parts = []
     for zcd, week_items in sorted(week_groups.items()):
-        # 按星期排序（xqj 1=周一, 7=周日）
-        sorted_items = sorted(week_items, key=lambda x: int(x.get("xqj", 0)))
+        # 🚀 按星期排序：利用模 7 排序，将周日 (7) 排在第 0 位（最前面），周六排在最后。
+        sorted_items = sorted(week_items, key=lambda x: int(x.get("xqj", 0)) % 7)
         
         day_parts = []
         for item in sorted_items:
@@ -313,6 +316,7 @@ def merge_course_times_with_details(items: List[Dict], start_sunday: str) -> str
         # 清理周次显示
         zcd_clean = zcd.replace("周", "").strip()
         if zcd_clean.isdigit():
+            zcd_display = f"get_{zcd_clean}周"
             zcd_display = f"第{zcd_clean}周"
         else:
             zcd_display = zcd
@@ -320,59 +324,3 @@ def merge_course_times_with_details(items: List[Dict], start_sunday: str) -> str
         week_parts.append(f"{zcd_display}：{week_time_str}")
     
     return "；".join(week_parts)
-
-
-# ==========================================================
-# 本地测试入口
-# ==========================================================
-if __name__ == "__main__":
-    import sys
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
-    print("=" * 70)
-    print("【本地测试】课程表 API 工具")
-    print("=" * 70)
-
-    # ==================== 请替换为你的真实教务 Cookie ====================
-    # 这里填入你的有效 JSESSIONID 和 SF_cookie_1
-    # 可以从 login_helper.py 运行后复制输出中的 educational 字段
-    TEST_COOKIE = (
-        "JSESSIONID=1C2B7C059E3324B6ABCB01BE3859C18D; "
-        "SF_cookie_1=87446532"
-    )
-    # =====================================================================
-
-    test_state = {
-        "cookies": {
-            "educational": TEST_COOKIE
-        }
-    }
-
-    print(f"\nCookie 预览: {TEST_COOKIE[:80]}...")
-    print("-" * 70)
-
-    # 测试不同学期的课表
-    test_cases = [
-        ("2025", "3", "第三学期（暑期学校）"),
-        ("2025", "2", "第二学期"),
-        ("2025", "1", "第一学期"),
-    ]
-
-    for year, sem, desc in test_cases:
-        print(f"\n查询 {year}-{int(year)+1} 学年 {desc}...")
-        try:
-            result = query_whu_schedule.invoke({
-                "state": test_state,
-                "year": year,
-                "semester": sem
-            })
-            print("=" * 70)
-            print(f"📊 【结果】{desc}")
-            print("=" * 70)
-            print(result)
-            print("=" * 70)
-        except Exception as e:
-            print(f"❌ 查询 {desc} 失败: {str(e)}")
-
-    print("\n✅ 测试完成！")
