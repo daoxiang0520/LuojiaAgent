@@ -456,7 +456,7 @@ def reserve_library_seat(
 # ==================== 4. 查询预约记录 ====================
 @tool
 def query_user_reservations(
-    query_type: str = "active",
+    query_type: str = "all",
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """查询用户的图书馆预约记录，返回预约单列表（含预约单ID、日期、时段、座位号、状态）。
@@ -472,7 +472,7 @@ def query_user_reservations(
     返回: 预约记录列表，每条含预约单ID、日期、时间、位置、状态。"""
     print("--- [预约记录] 查询 ---")
 
-    path = "/jsq/static/frontApi/user/history/1/50"
+    path = "/jsq/static/frontApi/user/history/0/50"
     try:
         res_json = _call_api(state, path, {})
     except Exception as e:
@@ -480,21 +480,27 @@ def query_user_reservations(
 
     if not res_json.get("status"):
         return f"【查询失败】：{res_json.get('message', '鉴权失败，请重新登录')}"
-
-    page_list = res_json.get("data", {}).get("pageList", []) if isinstance(res_json.get("data"), dict) else []
+    data = res_json.get("data", {}) if isinstance(res_json.get("data"), dict) else {}
+    page_list = data.get("list", data.get("pageList", []))
     if not page_list:
         return "系统提示：当前没有任何预约记录（含历史）。"
 
-    finished_statuses = {"已结束", "已取消", "违规已签退", "已完成"}
+    STATUS_CN = {"CANCEL": "已取消", "STOP": "已结束", "LEAVE_EARLY": "早退签退",
+                 "已结束": "已结束", "已取消": "已取消", "违规已签退": "违规已签退", "已完成": "已完成"}
+    finished_codes = {"CANCEL", "STOP", "LEAVE_EARLY", "已结束", "已取消", "违规已签退", "已完成"}
     active_items, history_items = [], []
 
     for item in page_list:
-        s = item.get("statusName", "未知")
+        code = item.get("status", item.get("statusName", "未知"))
+        s = STATUS_CN.get(code, code)
+        date = item.get("date") or item.get("makeDateStr", "?")
+        begin = item.get("beginTime") or item.get("makeBeginStr", "?")
+        end = item.get("endTime") or item.get("makeEndStr", "?")
         line = (
-            f"  * {s} | {item.get('date', '?')} | {item.get('beginTime', '?')}~{item.get('endTime', '?')} | "
+            f"  * {s} | {date} | {begin}~{end} | "
             f"{item.get('roomName', '')} {item.get('seatLabel', '?')}号 | ID: `{item.get('id')}`"
         )
-        (history_items if s in finished_statuses else active_items).append(line)
+        (history_items if code in finished_codes else active_items).append(line)
 
     lines = ["武汉大学图书馆 个人预约记录："]
     total = len(page_list)
@@ -548,7 +554,7 @@ def cancel_library_reservation(
     # 无 ID 时自动查找
     if not target_id:
         try:
-            history = _call_api(state, "/jsq/static/frontApi/user/history/1/50", {})
+            history = _call_api(state, "/jsq/static/frontApi/user/history/0/100", {})
         except Exception as e:
             return f"【查询失败】：{e}"
 
@@ -556,7 +562,7 @@ def cancel_library_reservation(
         for order in page_list:
             if (order.get("date") == query_date
                 and (order.get("seatLabel") or order.get("seatNo")) == seat_label
-                and any(kw in order.get("statusName", "") for kw in ["待", "进行"])):
+                and order.get("status", order.get("statusName", "")) not in {"CANCEL", "STOP", "LEAVE_EARLY", "已结束", "已取消"}):
                 target_id = order.get("id")
                 break
         if not target_id:
