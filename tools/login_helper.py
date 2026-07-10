@@ -2,6 +2,7 @@
 
 import time
 import re
+import json
 from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.types import Command
@@ -26,32 +27,32 @@ def interactive_whu_login() -> dict:
         context = browser.new_context()
         page = context.new_page()
 
-        # -------------------- 【步骤 1：登录智慧珞珈】 --------------------
-        login_url = "https://cas.whu.edu.cn/authserver/login?service=https%3A%2F%2Fzhlj.whu.edu.cn%2FcasLogin"
+        # -------------------- 【步骤 1：直接登录 CAS】 --------------------
+        # CAS 登录检测：用 CASTGC 票据（只有登录成功后 CAS 才会签发）
+        # 不能用 JSESSIONID（CAS 页面一加载就会设，是匿名会话）
+        login_url = "https://cas.whu.edu.cn/authserver/login"
         page.goto(login_url)
-
-        max_wait = 120  # 从 180 秒缩短到 120 秒
+        print("[INFO] 请在弹出的浏览器窗口中扫码或输入密码登录 CAS...")
+        max_wait = 120
         elapsed = 0
-        zhlj_cookie_str = ""
+        saved_cookies = []
 
         while elapsed < max_wait:
             cookies = context.cookies()
-            has_portal_token = any(c['name'] == 'PORTAL-TOKEN' and c['value'] for c in cookies)
+            # CASTGC = CAS Ticket Granting Cookie，登录成功后才存在
+            has_castgc = any(c['name'] == 'CASTGC' and c['value'] for c in cookies)
 
-            if has_portal_token:
-                print("\n[OK] 智慧珞珈门户鉴权成功！正在保存会话...")
-                zhlj_cookie_list = context.cookies(urls=["https://zhlj.whu.edu.cn/"])
-                zhlj_cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in zhlj_cookie_list])
-                # 保存全部 Cookie（供后续 headless 浏览器注入）
+            if has_castgc:
+                print("\n[OK] CAS 统一身份认证成功！CASTGC 票据已获取。")
                 saved_cookies = context.cookies()
                 break
 
             time.sleep(0.5)
             elapsed += 1
 
-        if not zhlj_cookie_str:
+        if not saved_cookies:
             browser.close()
-            raise TimeoutError("智慧珞珈登录超时或失败。")
+            raise TimeoutError("CAS 登录超时或失败，未获取到 CASTGC 票据。请在 120 秒内完成扫码/密码登录。")
 
         # 关闭有头浏览器，后续全部用 headless
         browser.close()
@@ -83,7 +84,7 @@ def interactive_whu_login() -> dict:
         page2.on("request", handle_request)
 
         # -------------------- 步骤 3：图书馆 OAuth 免密流转 --------------------
-        print("[OK] [后台免密流转 1/2] 正在通过图书馆 OAuth 重定向接口同步会话...")
+        print("[OK] [后台免密流转 1/3] 正在通过图书馆 OAuth 重定向接口同步会话...")
         lib_oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
         page2.goto(lib_oauth_url)
 
@@ -96,9 +97,35 @@ def interactive_whu_login() -> dict:
             print(f"[WARN] 未能自动从 URL 提取 JWT 密钥: {str(e)}")
             jwt_token = ""
 
+        # ── 加载图书馆 SPA，触发 frontApi 请求以捕获 library_token ──
+        hmac_key = ""
+        if jwt_token:
+            try:
+                print("[OK] [后台免密流转 2/3] 正在加载图书馆 SPA 页面...")
+                page2.goto(f"https://seat.lib.whu.edu.cn/seat/#/login?token={jwt_token}", timeout=15000)
+                page2.wait_for_load_state("networkidle", timeout=15000)
+
+                # 等待 frontApi 请求被拦截
+                for _ in range(50):
+                    if captured_credentials["token"] and captured_credentials["hmac"]:
+                        break
+                    time.sleep(0.1)
+
+                # 从 sessionStorage 提取 HMAC 密钥
+                raw = page2.evaluate("() => sessionStorage.getItem('jsq_p-systemInfo')")
+                if raw:
+                    try:
+                        hmac_key = json.loads(raw).get("hmacKey", "")
+                        print(f"[OK] HMAC 密钥提取{'成功' if hmac_key else '失败'}")
+                    except:
+                        hmac_key = ""
+                        print("[WARN] HMAC 密钥解析异常")
+            except Exception as e:
+                print(f"[WARN] 图书馆 SPA 加载异常: {e}")
+
         # -------------------- 步骤 4：访问教务系统收割 Cookie --------------------
-        print("[OK] [后台免密流转 2/2] 正在访问教务系统获取 Cookie...")
-        page2.goto("https://jwgl.whu.edu.cn/")
+        print("[OK] [后台免密流转 3/3] 正在访问教务系统获取 Cookie...")
+        page2.goto("https://cas.whu.edu.cn/authserver/login?service=https%3A%2F%2Fjwgl.whu.edu.cn%2F")
         try:
             page2.wait_for_load_state("domcontentloaded", timeout=15000)
             print("[OK] 教务系统页面加载完成。")
@@ -124,14 +151,15 @@ def interactive_whu_login() -> dict:
             print("\n✅ [成功] 教务系统 4 个核心 Cookie 已全部收割！")
 
         return {
-            "cookie_str": zhlj_cookie_str,
+            "cookie_str": "",  # 不再依赖 zhlj PORTAL-TOKEN，CAS CASTGC 已覆盖
             "jwgl_cookie_str": jwgl_cookie_str,
             "library_token": captured_credentials["token"],
             "library_jwt_token": jwt_token,
             "library_hmac": captured_credentials["hmac"],
             "library_request_date": captured_credentials["xdate"],
             "library_request_id": captured_credentials["xid"],
-            "raw_cookies": all_cookies
+            "raw_cookies": all_cookies,
+            "library_hmac_key": hmac_key,
         }
 
 
@@ -146,12 +174,13 @@ def login_to_whu_portal(tool_call_id: Annotated[str, InjectedToolCallId]) -> Com
         cookies_dict = {
             "zhlj": payload.get("cookie_str", ""),
             "educational": payload.get("jwgl_cookie_str", ""),
-            "library_cookie": payload.get("raw_cookies", []),  # 注入专供 Playwright 用的 List[dict]
+            "library_cookie": payload.get("raw_cookies", []),
             "library_token": payload.get("library_token", ""),
             "library_jwt_token": payload.get("library_jwt_token", ""),
             "library_hmac": payload.get("library_hmac", ""),
             "library_request_date": payload.get("library_request_date", ""),
-            "library_request_id": payload.get("library_request_id", "")
+            "library_request_id": payload.get("library_request_id", ""),
+            "library_hmac_key": payload.get("library_hmac_key", ""),
         }
         return Command(
             update={
