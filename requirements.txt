@@ -1,0 +1,10 @@
+streamlit
+langgraph
+langchain-core
+langchain-openai
+playwright
+requests
+urllib3
+pycryptodomex
+opencv-python
+numpy
