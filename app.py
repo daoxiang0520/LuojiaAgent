@@ -5,60 +5,61 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Generator, Dict
 
-# ==============================================================================
+# ==============================================================
 # 1. 页面基础配置 (必须处于脚本最顶部)
-# ==============================================================================
+# ==============================================================
 st.set_page_config(page_title="LuojiaAgent 校园助手", page_icon="🏫", layout="wide")
 
-# ==============================================================================
-# 2. 常量与主题配置中心 (已对色彩深度调优，极致护眼)
-# ==============================================================================
+# ==============================================================
+# 2. 常量与主题配置中心
+# ==============================================================
 THEMES = {
     "day": {
         "bg_list": [
-            "linear-gradient(135deg, #f4f6f9 0%, #eef1f6 100%)",  # 柔和冰蓝灰
-            "linear-gradient(135deg, #fdfbf7 0%, #f5f0e6 100%)",  # 暖纸色 (极度舒适)
-            "linear-gradient(135deg, #f5fbf7 0%, #eaf5ee 100%)",  # 淡雅薄荷
-            "linear-gradient(135deg, #fcf5f7 0%, #f3e6eb 100%)",  # 晚樱粉白
-            "linear-gradient(135deg, #f6f5fa 0%, #ebe9f3 100%)",  # 软紫罗兰
+            "linear-gradient(135deg, #f4f6f9 0%, #eef1f6 100%)",
+            "linear-gradient(135deg, #fdfbf7 0%, #f5f0e6 100%)",
+            "linear-gradient(135deg, #f5fbf7 0%, #eaf5ee 100%)",
+            "linear-gradient(135deg, #fcf5f7 0%, #f3e6eb 100%)",
+            "linear-gradient(135deg, #f6f5fa 0%, #ebe9f3 100%)",
         ],
-        "mask_rgb": "248, 250, 252",  # Slate-50 舒适底色
-        "text_color": "#1e293b",      # Slate-800 代替纯黑，柔和对比
+        "mask_rgb": "248, 250, 252",
+        "text_color": "#1e293b",
         "bubble_bg": "rgba(255, 255, 255, 0.95)",
         "sidebar_bg": "rgba(241, 245, 249, 0.92)"
     },
     "night": {
         "bg_list": [
-            "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",  # 深灰石板色 (主打)
-            "linear-gradient(135deg, #151515 0%, #222222 100%)",  # 暖灰黑 (无眩光)
-            "linear-gradient(135deg, #121824 0%, #1a2332 100%)",  # 科技暗蓝
-            "linear-gradient(135deg, #1b1622 0%, #282132 100%)",  # 极低蓝光暖紫
-            "linear-gradient(135deg, #1c1917 0%, #292524 100%)",  # 暖石墨色
+            "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+            "linear-gradient(135deg, #151515 0%, #222222 100%)",
+            "linear-gradient(135deg, #121824 0%, #1a2332 100%)",
+            "linear-gradient(135deg, #1b1622 0%, #282132 100%)",
+            "linear-gradient(135deg, #1c1917 0%, #292524 100%)",
         ],
-        "mask_rgb": "15, 23, 42",      # Slate-900 绝佳滤光底色
-        "text_color": "#e2e8f0",      # Slate-200 柔和灰白，有效防止眼球Halo效应
-        "bubble_bg": "rgba(30, 41, 59, 0.85)", # Slate-800 半透气泡
+        "mask_rgb": "15, 23, 42",
+        "text_color": "#e2e8f0",
+        "bubble_bg": "rgba(30, 41, 59, 0.85)",
         "sidebar_bg": "rgba(15, 23, 42, 0.9)"
     }
 }
 
-# ==============================================================================
+# ==============================================================
 # 3. 会话状态初始化
-# ==============================================================================
+# ==============================================================
 def init_session_states():
     defaults = {
         "all_sessions": {},
         "messages": [],
         "thread_id": str(uuid.uuid4()),
         "is_login": False,
+        "cookies": None,  # 持久化存储跨会话的 Cookie 凭证
         "login_fail_msg": "",
         "bg_index": 0,
         "bg_opacity": 0.65,
         "auto_read_ai": True,
         "show_setting_modal": False,
         "theme_mode": "day",
-        "pending_speech": None,  # 用于记录当前需要朗读的文本，防止 rerun 中断语音播报
-        "starter_trigger": None  # 用于记录推荐卡片点击触发提问的临时变量
+        "pending_speech": None,
+        "starter_trigger": None
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -66,16 +67,14 @@ def init_session_states():
 
 init_session_states()
 
-# 根据当前主题读取配置
 current_theme = THEMES[st.session_state.theme_mode]
 bg_list = current_theme["bg_list"]
 current_bg = bg_list[st.session_state.bg_index]
 
-# ==============================================================================
+# ==============================================================
 # 4. 工具与辅助功能区
-# ==============================================================================
+# ==============================================================
 def get_beijing_greeting() -> str:
-    """根据东八区物理时间返回具有珞珈校园气息的迎宾语"""
     beijing_time = datetime.now(timezone(timedelta(hours=8)))
     hour = beijing_time.hour
     if 5 <= hour < 9:
@@ -92,7 +91,6 @@ def get_beijing_greeting() -> str:
         return "🌙 珞珈深夜 · 繁星相伴，注意劳逸结合早点休息"
 
 def speak_text(text: str):
-    """通过系统 SpeechSynthesis 接口朗读文本"""
     safe_text = text.replace("`", r"\`").replace('"', r'\"').replace("'", r"\'")
     js_script = f"""
     <script>
@@ -106,9 +104,6 @@ def speak_text(text: str):
     st.components.v1.html(js_script, height=0)
 
 def inject_custom_css():
-    """动态注入 CSS 样式以支持主题切换、精细滚动条、气泡动效及位置适配"""
-    
-    # 针对不同主题动态计算侧边栏普通按钮（非高亮 Primary 按钮）的颜色配置，确保高对比度
     if st.session_state.theme_mode == "night":
         sidebar_button_bg = "rgba(255, 255, 255, 0.08)"
         sidebar_button_text = "#e2e8f0"
@@ -122,7 +117,6 @@ def inject_custom_css():
 
     st.markdown(f"""
     <style>
-    /* 全局背景过渡动画 */
     .stApp {{
         position: fixed;
         top: 0;
@@ -137,7 +131,6 @@ def inject_custom_css():
         z-index: -2;
         transition: background-image 0.6s ease-in-out;
     }}
-    /* 遮罩层过渡 */
     .stApp::before {{
         content: "";
         position: fixed;
@@ -149,14 +142,12 @@ def inject_custom_css():
         z-index: -1;
         transition: background-color 0.6s ease-in-out;
     }}
-    /* 主界面文字颜色自适应 */
     .main .stMarkdown, .main p, .main span, .main li, .main label {{
         color: {current_theme['text_color']} !important;
     }}
     .main h1, .main h2, .main h3, .main h4, .main h5, .main h6 {{
         color: {current_theme['text_color']} !important;
     }}
-    /* 侧边栏文字颜色自适应 */
     section[data-testid="stSidebar"] .stMarkdown, 
     section[data-testid="stSidebar"] p, 
     section[data-testid="stSidebar"] span, 
@@ -172,8 +163,6 @@ def inject_custom_css():
         text-align: center;
         color: {current_theme['text_color']} !important;
     }}
-
-    /* 极致美化全局滚动条，使之极细且透明，不遮挡精美背景 */
     ::-webkit-scrollbar {{
         width: 6px !important;
         height: 6px !important;
@@ -188,8 +177,6 @@ def inject_custom_css():
     ::-webkit-scrollbar-thumb:hover {{
         background: rgba(128, 128, 128, 0.3) !important;
     }}
-
-    /* 强制重塑侧边栏次要按钮的背景色和字色，防亮色环境污染 */
     section[data-testid="stSidebar"] div.stButton > button:not([kind="primary"]):not([data-testid="baseButton-primary"]) {{
         background-color: {sidebar_button_bg} !important;
         border: {sidebar_button_border} !important;
@@ -202,8 +189,6 @@ def inject_custom_css():
     section[data-testid="stSidebar"] div.stButton > button:not([kind="primary"]):not([data-testid="baseButton-primary"]):hover {{
         background-color: {sidebar_button_hover_bg} !important;
     }}
-
-    /* 气泡样式自适应与悬浮微升呼吸感动画 */
     .stChatMessage {{
         background: {current_theme['bubble_bg']} !important;
         border-radius: 12px !important;
@@ -214,8 +199,6 @@ def inject_custom_css():
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
     }}
-
-    /* 侧边栏布局调优 */
     section[data-testid="stSidebar"] {{
         background: transparent !important;
     }}
@@ -224,14 +207,12 @@ def inject_custom_css():
         padding: 12px;
         border-radius: 10px;
     }}
-    /* 侧边栏三点操作按钮微调 */
     section[data-testid="stSidebar"] div[data-testid="stPopover"] button {{
         border: 1px solid rgba(128, 128, 128, 0.15) !important;
         background: transparent !important;
         border-radius: 6px !important;
         height: 100% !important;
     }}
-    /* 聊天输入框美化 */
     div[data-testid="stChatInput"] {{
         border-radius: 18px !important;
         box-shadow: 0 2px 10px rgba(0,0,0,0.08) !important;
@@ -246,8 +227,6 @@ def inject_custom_css():
     .stChatMessage div[data-testid="stHorizontalBlock"] {{
         justify-content: flex-end;
     }}
-
-    /* 趣味句子组件外壳固定定位：放置在屏幕最底部中央输入框下方 */
     .custom-quote-wrapper {{
         position: fixed;
         bottom: 5px;
@@ -259,8 +238,6 @@ def inject_custom_css():
         text-align: center;
         pointer-events: auto;
     }}
-    
-    /* 稍许抬高输入框高度，为底部趣味句子腾出精致空隙 */
     div[data-testid="stChatInput"] {{
         margin-bottom: 24px !important;
     }}
@@ -270,7 +247,6 @@ def inject_custom_css():
 inject_custom_css()
 
 def render_fun_quotes(text_color: str):
-    """渲染底部随机趣味段子组件（内含纯前端无延迟淡入淡出动画及旋转重置）"""
     quotes = [
         "今天又是被高数‘教做人’的一天吗？🧠",
         "文理学部的樱花开了，但我的代码还没跑通……🌸",
@@ -280,7 +256,7 @@ def render_fun_quotes(text_color: str):
         "听说，在珞珈山散步容易偶遇到野猪？🐗",
         "弘毅学堂的学霸，连梦话都是在背单词。📖",
         "我的绩点就像珞珈山的台阶，爬得我气喘吁吁。🧗‍♂️",
-        "今天的天气，适合去东湖骑行，不适合写代码。🚴",
+        "今天的天气，适合去东湖骑行，不适合写代码.🚴",
         "万物皆可LuojiaAgent，除了帮我写作业。😜",
         "梅园的台阶、樱顶的楼梯，珞珈山每天都在帮我做有氧。🏃‍♀️",
         "只要胆子大，九一二操场也是我的停机坪。✈️",
@@ -401,11 +377,10 @@ def render_fun_quotes(text_color: str):
     st.components.v1.html(html_code, height=35)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ==============================================================================
+# ==============================================================
 # 5. 模态设置面板 (Dialog)
-# ==============================================================================
+# ==============================================================
 def reset_setting_modal():
-    """当用户通过点击外部、按 ESC 键或右上角 X 键关闭设置弹窗时，清除状态标志"""
     st.session_state.show_setting_modal = False
 
 @st.dialog("系统设置面板", width="small", on_dismiss=reset_setting_modal)
@@ -455,12 +430,11 @@ def render_setting_modal():
         st.session_state.show_setting_modal = False
         st.rerun()
 
-# ==============================================================================
+# ==============================================================
 # 6. 侧边栏渲染 (Sidebar)
-# ==============================================================================
+# ==============================================================
 def render_sidebar():
     with st.sidebar:
-        # 融入武大专属时辰人文卡片
         greeting_text = get_beijing_greeting()
         st.markdown(
             f"""
@@ -495,7 +469,7 @@ def render_sidebar():
             if login_btn:
                 st.session_state.login_fail_msg = ""
                 try:
-                    from agent import run_agent_stream
+                    from agent import run_agent_stream, get_agent_cookies
                     login_generator = run_agent_stream(
                         user_input="调用统一身份登录工具完成登录",
                         thread_id=st.session_state.thread_id,
@@ -511,8 +485,15 @@ def render_sidebar():
                             if event_type == "tool_output":
                                 login_success = True
                         if login_success:
-                            st.session_state.is_login = True
-                            login_status.update(label="✅ 登录完成", state="complete", expanded=False)
+                            # 提取登录会话中保存的 cookies 凭证
+                            cookies = get_agent_cookies(st.session_state.thread_id)
+                            if cookies:
+                                st.session_state.cookies = cookies
+                                st.session_state.is_login = True
+                                login_status.update(label="✅ 登录完成", state="complete", expanded=False)
+                            else:
+                                st.session_state.login_fail_msg = "未检测到成功的会话凭证，请重试。"
+                                login_status.update(label="❌ 登录失败", state="error", expanded=True)
                         else:
                             st.session_state.login_fail_msg = "未完成浏览器登录验证，请重试"
                             login_status.update(label="❌ 登录失败", state="error", expanded=True)
@@ -523,6 +504,7 @@ def render_sidebar():
             logout_btn = st.button("✅ 已登录 | 点击退出登录", use_container_width=True, type="secondary")
             if logout_btn:
                 st.session_state.is_login = False
+                st.session_state.cookies = None  # 清除持久化的凭证
                 st.session_state.login_fail_msg = ""
                 st.session_state.thread_id = str(uuid.uuid4())
                 st.session_state.messages = []
@@ -586,9 +568,9 @@ def render_sidebar():
             st.session_state.all_sessions = {}
             st.rerun()
 
-# ==============================================================================
-# 7. 页面头部渲染 (采用三栏布局，实现大标题水平居中)
-# ==============================================================================
+# ==============================================================
+# 7. 页面头部渲染
+# ==============================================================
 header_row = st.columns([0.15, 0.7, 0.15], vertical_alignment="center")
 with header_row[1]:
     st.markdown(
@@ -610,12 +592,11 @@ if st.session_state.show_setting_modal:
 
 render_sidebar()
 
-# ==============================================================================
-# 8. 主聊天区域与逻辑控制 (Main Interface)
-# ==============================================================================
+# ==============================================================
+# 8. 主聊天区域与逻辑控制
+# ==============================================================
 chat_container = st.container(height=600)
 with chat_container:
-    # 渲染历史保存下来的对话消息。若无历史，则呈现精美的珞珈灵感卡片。
     if len(st.session_state.messages) == 0:
         st.markdown(
             f"""
@@ -665,14 +646,12 @@ if st.session_state.pending_speech:
     speak_text(st.session_state.pending_speech)
     st.session_state.pending_speech = None
 
-# 在此处调用底部句子组件（放在交互拦截及输入框渲染之前，确保它始终在页面加载时渲染）
 render_fun_quotes(current_theme['text_color'])
 
-# 优先检测是否由灵感卡片点击触发
 triggered_input = st.session_state.get("starter_trigger", None)
 if triggered_input:
     user_input = triggered_input
-    st.session_state.starter_trigger = None  # 消费完立即重置并移出触发状态
+    st.session_state.starter_trigger = None
 else:
     user_input = st.chat_input("有什么我可以帮您的？(例如：帮我查明天的课表)")
 
@@ -710,7 +689,8 @@ if user_input:
                     user_input=user_input,
                     thread_id=st.session_state.thread_id,
                     student_id="",
-                    password=""
+                    password="",
+                    cookies=st.session_state.cookies  # 将持久化保存的 cookies 注入到新会话状态
                 )
                 
                 with status_container:
