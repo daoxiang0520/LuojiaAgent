@@ -10,6 +10,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from datetime import datetime, timezone, timedelta
+
 def get_system_date_prompt() -> str:
     # 1. 强制获取东八区（北京时间）
     tz_beijing = timezone(timedelta(hours=8))
@@ -19,7 +20,7 @@ def get_system_date_prompt() -> str:
     weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
     weekday = weekdays[now.weekday()]
     
-    # 3. 计算明天（跨月、跨年时，大模型极易算错，我们帮它算好）
+    # 3. 计算明天
     tomorrow = now + timedelta(days=1)
     tomorrow_weekday = weekdays[tomorrow.weekday()]
     
@@ -32,34 +33,32 @@ def get_system_date_prompt() -> str:
         f"当用户使用“明天”、“后天”、“这周五”、“下周”等相对时间时，"
         f"你必须以此时间锚点为基准，在脑中换算出绝对的 YYYY-MM-DD 格式，再将换算后的绝对日期作为参数传给工具。"
         f"绝对不允许使用已经过去的年份或臆造的日期。"
-        f"查询网站信息时遇到日期和星期不匹配的情况时，必须以当前系统时间锚点为准，重新计算出正确的日期和星期，并在回答中明确告知用户。"
     )
 
     return date_prompt
 
 # 导入所有统一打包的工具
 from tools import ALL_TOOLS
+
 class CampusCookies(TypedDict, total=False):
     zhlj: str
     educational: str
-    library_cookie: list  # 👈 这里必须是 list 类型，用于接收 raw_cookies
+    library_cookie: list  # 接收 raw_cookies
     library_token: str
     library_jwt_token: str
     library_hmac: str
     library_request_date: str
     library_request_id: str
 
-
-
-# 1. 定义全局状态（State），新增 cookie_str 字段
+# 定义全局状态（State）
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    cookies: CampusCookies  # 【新增】用来持久化存储登录成功后的 Cookie 凭证
+    cookies: CampusCookies  # 用来持久化存储登录成功后的 Cookie 凭证
 
-# 2. 注册工具节点
+# 注册工具节点
 tool_node = ToolNode(ALL_TOOLS)
 
-# 3. 初始化 DeepSeek — 从 api.key 文件读取密钥
+# 初始化 DeepSeek — 从 api.key 文件读取密钥
 def _load_api_key() -> str:
     key_file = os.path.join(os.path.dirname(__file__), "api.key")
     if os.path.exists(key_file):
@@ -75,11 +74,10 @@ llm = ChatOpenAI(
 )
 llm_with_tools = llm.bind_tools(ALL_TOOLS)
 
-# 4. 定义大模型思考逻辑
+# 定义大模型思考逻辑
 def call_model(state: AgentState):
     messages = state["messages"]
     
-    # 检查状态中是否有 Cookie，以便在 Prompt 中动态提醒大模型当前登录状态
     is_logged_in = "已登录" if state.get("cookies") else "未登录"
     date_anchor_prompt = get_system_date_prompt()
     
@@ -103,7 +101,7 @@ def call_model(state: AgentState):
     response = llm_with_tools.invoke(full_messages)
     return {"messages": [response]}
 
-# 5. 定义条件路由
+# 定义条件路由
 def should_continue(state: AgentState):
     last_message = state["messages"][-1]
     if last_message.tool_calls:
@@ -111,7 +109,7 @@ def should_continue(state: AgentState):
     return END
 
 memory = MemorySaver()
-# 6. 构建图结构
+# 构建图结构
 workflow = StateGraph(AgentState)
 workflow.add_node("agent", call_model)
 workflow.add_node("tools", tool_node)
@@ -122,11 +120,20 @@ workflow.add_edge("tools", "agent")
 
 app = workflow.compile(checkpointer=memory)
 
+def get_agent_cookies(thread_id: str) -> dict:
+    """
+    从 LangGraph Checkpointer 中获取指定 thread_id 的 cookies 状态，
+    供 Streamlit 调用并持久化存储。
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    state = app.get_state(config)
+    if state and state.values:
+        return state.values.get("cookies")
+    return None
 
-def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", password: str = ""):
+def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", password: str = "", cookies: dict = None):
     """
     供前端 Streamlit 循环调用的核心接口。
-    输入用户的提问，逐步产出智能体的执行状态、调用了什么工具、以及大模型的最终回答。
     """
     config = {
         "configurable": {
@@ -137,18 +144,20 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
     }
     inputs = {"messages": [("user", user_input)]}
     
+    # 每次运行前，若前端传来了持久化 cookies 凭证，则注入到新会话状态中
+    if cookies:
+        inputs["cookies"] = cookies
+    
     # 使用同步 updates 模式逐步监听状态机的每一步节点变化
     for chunk in app.stream(inputs, config=config, stream_mode="updates"):
         for node_name, node_output in chunk.items():
             if node_name == "tools":
-                # 工具节点运行完毕，获取它的返回内容
                 if isinstance(node_output, dict):
                     messages = node_output.get("messages", [])
                 elif isinstance(node_output, list):
                     messages = node_output
                 else:
                     messages = []
-
 
                 if messages:
                     last_msg = messages[-1]
@@ -157,14 +166,11 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
                         "content": f"📥 工具执行成功，返回结果：\n{last_msg.content}"
                     }
             elif node_name == "agent":
-                # 决策节点运行完毕
                 messages = node_output.get("messages", [])
                 if messages:
                     last_msg = messages[-1]
-                    # 如果大模型作出了调用工具的决定
                     if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
                         for tc in last_msg.tool_calls:
-                            # 翻译工具名给用户看，提升友好度
                             tool_mapping = {
                                 "login_to_whu_portal": "武大统一身份认证",
                                 "query_whu_schedule": "教务课表查询",
@@ -185,7 +191,6 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
                                 "content": f"🤖 智能体判定：需要调用【{display_name}】接口..."
                             }
                     else:
-                        # 如果大模型没有要调用的工具，说明做出了最终回答
                         yield {
                             "type": "tool_output",
                             "content": last_msg.content
