@@ -73,7 +73,6 @@ llm = ChatDeepSeek(
     api_key=_load_api_key(),
     api_base="https://api.deepseek.com",
     temperature=0.1,
-    max_tokens=4096,
     reasoning_effort="high",
     extra_body={"thinking": {"type": "enabled"}},
 )

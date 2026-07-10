@@ -9,3 +9,4 @@ pycryptodomex
 opencv-python
 numpy
 httpx
+flask

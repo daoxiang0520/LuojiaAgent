@@ -174,6 +174,90 @@ def interactive_whu_login() -> dict:
 
 
 # ==========================================================
+# 代理模式：用 CASTGC 收割图书馆+教务凭证（无需弹窗）
+# ==========================================================
+def harvest_from_castgc(castgc: str) -> dict:
+    """
+    用 CASTGC 票据免弹窗收割图书馆+教务凭证。
+
+    Args:
+        castgc: CASTGC 值（如 "TGT-112146--..."）
+
+    Returns:
+        dict: 含 educational, library_token, library_hmac_key 等
+    """
+    saved_cookies = [{
+        "name": "CASTGC", "value": castgc,
+        "domain": "cas.whu.edu.cn", "path": "/authserver",
+        "httpOnly": True, "secure": False, "sameSite": "Lax",
+    }]
+
+    captured = {"token": "", "hmac_key": "", "jwt_token": ""}
+    jwgl_cookie_str = ""
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx = browser.new_context()
+        ctx.add_cookies(saved_cookies)
+        page = ctx.new_page()
+
+        # ── 图书馆 OAuth → JWT ──
+        oauth_url = "https://seat.lib.whu.edu.cn/rem/static/sso/login?redirectUrl=https://seat.lib.whu.edu.cn/seat"
+        page.goto(oauth_url, timeout=30000)
+        try:
+            page.wait_for_url(lambda u: "token=" in u, timeout=30000)
+            m = re.search(r"token=([^&]+)", page.url)
+            captured["jwt_token"] = m.group(1) if m else ""
+            print(f"[Harvest] JWT: {captured['jwt_token'][:20]}...")
+        except Exception as e:
+            browser.close()
+            raise TimeoutError(f"CAS SSO 失败: {e}")
+
+        # ── SPA → sessionStorage token + hmacKey ──
+        page.wait_for_load_state("networkidle", timeout=30000)
+        for _ in range(100):
+            t = page.evaluate("() => sessionStorage.getItem('jsq_p-token')")
+            if t:
+                captured["token"] = t
+                break
+            time.sleep(0.15)
+
+        if captured["token"]:
+            for _ in range(60):
+                raw = page.evaluate("() => sessionStorage.getItem('jsq_p-systemInfo')")
+                if raw:
+                    try:
+                        si = json.loads(raw)
+                        if si.get("hmacKey"):
+                            captured["hmac_key"] = si["hmacKey"]
+                            break
+                    except Exception:
+                        pass
+                time.sleep(0.2)
+
+        # ── 教务系统 Cookie ──
+        page.goto("https://cas.whu.edu.cn/authserver/login?service=https%3A%2F%2Fjwgl.whu.edu.cn%2F")
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+        jwgl = ctx.cookies(urls=["https://jwgl.whu.edu.cn/"])
+        jwgl_cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in jwgl)
+
+        all_cookies = ctx.cookies()
+        browser.close()
+
+    print(f"[Harvest] token={'OK' if captured['token'] else 'FAIL'}, "
+          f"hmac_key={'OK' if captured['hmac_key'] else 'FAIL'}, "
+          f"jwgl={'OK' if jwgl_cookie_str else 'FAIL'}")
+
+    return {
+        "educational": jwgl_cookie_str,
+        "library_token": captured["token"],
+        "library_jwt_token": captured["jwt_token"],
+        "library_hmac_key": captured["hmac_key"],
+        "library_cookie": all_cookies,
+    }
+
+
+# ==========================================================
 # LangGraph 工具封装
 # ==========================================================
 @tool

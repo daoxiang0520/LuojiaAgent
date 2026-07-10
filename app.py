@@ -495,43 +495,130 @@ def render_sidebar():
         st.subheader("账号状态")
         if st.session_state.login_fail_msg:
             st.error(st.session_state.login_fail_msg)
-            
+
         if not st.session_state.is_login:
-            login_btn = st.button("🔐 点击登录", use_container_width=True, type="primary")
-            if login_btn:
-                st.session_state.login_fail_msg = ""
-                try:
-                    from agent import run_agent_stream, get_agent_cookies
-                    login_generator = run_agent_stream(
-                        user_input="调用统一身份登录工具完成登录",
-                        thread_id=st.session_state.thread_id,
-                        student_id="",
-                        password=""
-                    )
-                    with st.status("正在唤起浏览器登录窗口...", expanded=True) as login_status:
-                        login_success = False
-                        for event in login_generator:
-                            event_type = event.get("type")
-                            content = event.get("content", "")
-                            login_status.write(content)
-                            if event_type == "tool_output":
-                                login_success = True
-                        if login_success:
-                            # 提取登录会话中保存的 cookies 凭证
-                            cookies = get_agent_cookies(st.session_state.thread_id)
-                            if cookies:
-                                st.session_state.cookies = cookies
-                                st.session_state.is_login = True
-                                login_status.update(label="✅ 登录完成", state="complete", expanded=False)
-                            else:
-                                st.session_state.login_fail_msg = "未检测到成功的会话凭证，请重试。"
-                                login_status.update(label="❌ 登录失败", state="error", expanded=True)
+            login_method = st.radio("登录方式",
+                ["🔑 密码登录", "📱 扫码登录", "🌐 浏览器弹窗"],
+                horizontal=True, label_visibility="collapsed")
+
+            if login_method == "🔑 密码登录":
+                with st.form("pwd_login"):
+                    user = st.text_input("学号", placeholder="2025302114221")
+                    pwd = st.text_input("密码", type="password", placeholder="CAS 密码")
+                    submitted = st.form_submit_button("登录", use_container_width=True, type="primary")
+                    if submitted and user and pwd:
+                        st.session_state.login_fail_msg = ""
+                        try:
+                            from tools.cas_login import CasClient
+                            from tools.login_helper import harvest_from_castgc
+                            with st.status("正在登录...", expanded=True) as s:
+                                s.write("CAS 认证中...")
+                                client = CasClient()
+                                castgc = client.login_password(user, pwd)
+                                if not castgc:
+                                    st.session_state.login_fail_msg = "登录失败，请检查学号和密码"
+                                    s.update(label="❌ 登录失败", state="error", expanded=True)
+                                else:
+                                    s.write("正在获取图书馆和教务凭证...")
+                                    result = harvest_from_castgc(castgc)
+                                    st.session_state.cookies = {
+                                        "castgc": castgc,
+                                        "educational": result.get("educational", ""),
+                                        "library_token": result.get("library_token", ""),
+                                        "library_hmac_key": result.get("library_hmac_key", ""),
+                                        "library_cookie": result.get("library_cookie", []),
+                                    }
+                                    st.session_state.is_login = True
+                                    s.update(label="✅ 登录完成", state="complete", expanded=False)
+                                    st.rerun()
+                        except Exception as e:
+                            st.session_state.login_fail_msg = f"登录异常：{e}"
+
+            elif login_method == "📱 扫码登录":
+                if "qr_client" not in st.session_state:
+                    from tools.cas_login import CasClient
+                    st.session_state.qr_client = CasClient()
+                qr = st.session_state.qr_client
+
+                if "qr_img" not in st.session_state:
+                    try:
+                        img = qr.qr_get_image()
+                        if img:
+                            st.session_state.qr_img = img
                         else:
-                            st.session_state.login_fail_msg = "未完成浏览器登录验证，请重试"
-                            login_status.update(label="❌ 登录失败", state="error", expanded=True)
-                except Exception as e:
-                    st.session_state.login_fail_msg = f"登录异常：{str(e)}"
-                st.rerun()
+                            st.error("获取二维码失败，请重试")
+                    except Exception as e:
+                        st.error(f"获取二维码失败：{e}")
+
+                if st.session_state.get("qr_img"):
+                    import base64
+                    st.image(base64.b64decode(st.session_state.qr_img), caption="手机扫码登录", width=200)
+
+                if st.button("已扫码，完成登录", use_container_width=True, type="primary"):
+                    try:
+                        from tools.login_helper import harvest_from_castgc
+                        with st.status("正在等待确认...", expanded=True) as s:
+                            castgc = qr.qr_poll(timeout=10)
+                            if not castgc:
+                                s.update(label="❌ 未检测到确认，请重试", state="error", expanded=True)
+                            else:
+                                s.write("正在获取图书馆和教务凭证...")
+                                result = harvest_from_castgc(castgc)
+                                st.session_state.cookies = {
+                                    "castgc": castgc,
+                                    "educational": result.get("educational", ""),
+                                    "library_token": result.get("library_token", ""),
+                                    "library_hmac_key": result.get("library_hmac_key", ""),
+                                    "library_cookie": result.get("library_cookie", []),
+                                }
+                                st.session_state.is_login = True
+                                del st.session_state.qr_client
+                                del st.session_state.qr_img
+                                s.update(label="✅ 登录完成", state="complete", expanded=False)
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"登录异常：{e}")
+
+                if st.button("刷新二维码", use_container_width=True):
+                    st.session_state.qr_client = None
+                    st.session_state.qr_img = None
+                    st.rerun()
+
+            else:
+                login_btn = st.button("🔐 唤起浏览器登录", use_container_width=True, type="primary")
+                if login_btn:
+                    st.session_state.login_fail_msg = ""
+                    try:
+                        from agent import run_agent_stream, get_agent_cookies
+                        login_generator = run_agent_stream(
+                            user_input="调用统一身份登录工具完成登录",
+                            thread_id=st.session_state.thread_id,
+                            student_id="",
+                            password=""
+                        )
+                        with st.status("正在唤起浏览器登录窗口...", expanded=True) as login_status:
+                            login_success = False
+                            for event in login_generator:
+                                event_type = event.get("type")
+                                content = event.get("content", "")
+                                login_status.write(content)
+                                if event_type == "tool_output":
+                                    login_success = True
+                            if login_success:
+                                cookies = get_agent_cookies(st.session_state.thread_id)
+                                if cookies:
+                                    st.session_state.cookies = cookies
+                                    st.session_state.is_login = True
+                                    login_status.update(label="✅ 登录完成", state="complete", expanded=False)
+                                else:
+                                    st.session_state.login_fail_msg = "未检测到成功的会话凭证，请重试。"
+                                    login_status.update(label="❌ 登录失败", state="error", expanded=True)
+                            else:
+                                st.session_state.login_fail_msg = "未完成浏览器登录验证，请重试"
+                                login_status.update(label="❌ 登录失败", state="error", expanded=True)
+                    except Exception as e:
+                        st.session_state.login_fail_msg = f"登录异常：{str(e)}"
+                    st.rerun()
         else:
             logout_btn = st.button("✅ 已登录 | 点击退出登录", use_container_width=True, type="secondary")
             if logout_btn:
