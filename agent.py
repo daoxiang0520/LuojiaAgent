@@ -67,13 +67,8 @@ def _load_api_key() -> str:
     return os.getenv("DEEPSEEK_API_KEY", "")
 
 llm = ChatOpenAI(
-<<<<<<< HEAD
     model="deepseek-chat",
     openai_api_key=_load_api_key(),
-=======
-    model="deepseek-chat", 
-    openai_api_key="sk-4ef78b546ebb4d6dae12c1de5f17d734",
->>>>>>> 8e87a5d2348419729a268ea20cc93bcd007aa57c
     openai_api_base="https://api.deepseek.com",
     temperature=0.1
 )
