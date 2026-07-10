@@ -227,25 +227,56 @@ def inject_custom_css():
     .stChatMessage div[data-testid="stHorizontalBlock"] {{
         justify-content: flex-end;
     }}
-    .custom-quote-wrapper {{
-        position: fixed;
-        bottom: 5px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 99999;
-        width: 100%;
-        max-width: 600px;
-        text-align: center;
-        pointer-events: auto;
+    
+    /* ==============================================================
+       修改：更进一步提升提示词的高度 (bottom: 155px)
+       并引入响应式 CSS，自动根据侧边栏展开/收起状态调整左右定位，使其完美相对于主栏居中
+       ============================================================== */
+    .st-key-starter_container {{
+        position: fixed !important;
+        bottom: 155px !important;
+        left: calc(50% + 128px) !important; /* 默认主栏居中 (视口中点 + 默认侧边栏宽度 256px 的一半) */
+        transform: translateX(-50%) !important;
+        width: calc(100% - 40px) !important;
+        max-width: 730px !important;
+        z-index: 999998 !important;
+        background: transparent !important;
+        transition: left 0.25s ease-in-out !important; /* 当侧边栏状态切换时平滑移动 */
     }}
-    div[data-testid="stChatInput"] {{
-        margin-bottom: 24px !important;
+    
+    /* 当左侧侧边栏折叠 (aria-expanded="false") 时，主栏将占满整个视口，因此按钮回归 50% 屏幕正中 */
+    [data-testid="stSidebar"][aria-expanded="false"] ~ .main .st-key-starter_container {{
+        left: 50% !important;
+    }}
+    
+    /* 移动端/小屏幕适配：侧边栏通常采用悬浮蒙层，主栏并不被实际往右推挤，因此回归 50% 屏幕正中 */
+    @media (max-width: 991.98px) {{
+        .st-key-starter_container {{
+            left: 50% !important;
+        }}
+    }}
+
+    .st-key-starter_container button {{
+        background-color: {current_theme['bubble_bg']} !important;
+        color: {current_theme['text_color']} !important;
+        border: 1px solid rgba(128, 128, 128, 0.15) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
+        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, border-color 0.2s ease !important;
+        font-size: 11px !important;
+    }}
+    .st-key-starter_container button:hover {{
+        transform: translateY(-2px) !important;
+        border-color: #00a4ff !important;
     }}
     </style>
     """, unsafe_allow_html=True)
 
 inject_custom_css()
 
+# ==============================================================
+# 趣味话语排版
+# ==============================================================
 def render_fun_quotes(text_color: str):
     quotes = [
         "今天又是被高数‘教做人’的一天吗？🧠",
@@ -280,34 +311,35 @@ def render_fun_quotes(text_color: str):
         display: flex;
         justify-content: center;
         align-items: center;
-        height: 35px;
+        height: 55px;
     }}
     .quote-container {{
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 3px 10px;
+        padding: 4px 10px;
         background: rgba(128, 128, 128, 0.05);
-        border-radius: 20px;
+        border-radius: 12px;
         border: 1px solid rgba(128, 128, 128, 0.12);
         max-width: 95%;
         box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }}
     .quote-text {{
-        font-size: 11px;
+        font-size: 10px;
         color: {text_color};
         opacity: 0.8;
         transition: opacity 0.25s ease, transform 0.25s ease;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
+        word-break: break-all;
+        line-height: 1.3;
         user-select: none;
     }}
     .refresh-btn {{
+        flex-shrink: 0;
         background: none;
         border: none;
         cursor: pointer;
-        font-size: 11px;
+        font-size: 10px;
         padding: 0;
         display: inline-flex;
         align-items: center;
@@ -373,9 +405,7 @@ def render_fun_quotes(text_color: str):
     </body>
     </html>
     """
-    st.markdown('<div class="custom-quote-wrapper">', unsafe_allow_html=True)
-    st.components.v1.html(html_code, height=35)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.components.v1.html(html_code, height=55)
 
 # ==============================================================
 # 5. 模态设置面板 (Dialog)
@@ -568,6 +598,10 @@ def render_sidebar():
             st.session_state.all_sessions = {}
             st.rerun()
 
+        # 随机有趣话语放置在侧边栏底部
+        st.divider()
+        render_fun_quotes(current_theme['text_color'])
+
 # ==============================================================
 # 7. 页面头部渲染
 # ==============================================================
@@ -578,7 +612,7 @@ with header_row[1]:
         unsafe_allow_html=True
     )
     st.markdown(
-        f"<p style='text-align: center; margin: 8px 0 0 0; font-size: 0.95rem; color: {current_theme['text_color']}; opacity: 0.85;'>基于 DeepSeek 与 LangGraph 构建的武大校园助手系统</p>", 
+        f"<p style='text-align: center; margin: 8px 0 0 0; font-size: 0.95rem; color: {current_theme['text_color']}; opacity: 0.85;'>基于 DeepSeek 与 LangGraph 构建 of 武大校园助手系统</p>", 
         unsafe_allow_html=True
     )
 with header_row[2]:
@@ -600,38 +634,16 @@ with chat_container:
     if len(st.session_state.messages) == 0:
         st.markdown(
             f"""
-            <div style="text-align: center; margin-top: 60px; margin-bottom: 20px; opacity: 0.85;">
+            <div style="text-align: center; margin-top: 100px; margin-bottom: 20px; opacity: 0.85;">
                 <span style="font-size: 50px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));">🏫</span>
                 <h3 style="margin-top: 15px; font-weight: 600; color: {current_theme['text_color']};">你好！我是你的 LuojiaAgent</h3>
                 <p style="font-size: 13px; color: {current_theme['text_color']}; opacity: 0.7;">
-                    你可以向我查询课表、预约座位、查询成绩或了解天气。尝试点击下方卡片开启对话：
+                    我是你的专属珞珈智能助手。点击下方固定快捷按钮，或在输入框中直接提问，即可开始与我交流！
                 </p>
             </div>
             """, 
             unsafe_allow_html=True
         )
-        
-        col1, col2 = st.columns(2)
-        starters = [
-            ("📅 查明天的课程表", "帮我查一下明天的课程安排"),
-            ("📚 查询图书馆空座", "帮我看看现在图书馆哪里有空座"),
-            ("🌤️ 校园天气预测", "今天武大校园的天气怎么样"),
-            ("📈 查询本学期成绩", "帮我查询一下我的期末成绩")
-        ]
-        with col1:
-            if st.button(starters[0][0], use_container_width=True, key="star1"):
-                st.session_state.starter_trigger = starters[0][1]
-                st.rerun()
-            if st.button(starters[1][0], use_container_width=True, key="star2"):
-                st.session_state.starter_trigger = starters[1][1]
-                st.rerun()
-        with col2:
-            if st.button(starters[2][0], use_container_width=True, key="star3"):
-                st.session_state.starter_trigger = starters[2][1]
-                st.rerun()
-            if st.button(starters[3][0], use_container_width=True, key="star4"):
-                st.session_state.starter_trigger = starters[3][1]
-                st.rerun()
     else:
         for msg_idx, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
@@ -646,7 +658,20 @@ if st.session_state.pending_speech:
     speak_text(st.session_state.pending_speech)
     st.session_state.pending_speech = None
 
-render_fun_quotes(current_theme['text_color'])
+# 固定在输入框上方悬浮的 4 个紧凑辅助功能按钮
+with st.container(key="starter_container"):
+    button_cols = st.columns(4)
+    starters = [
+        ("📅 课程表查询", "帮我查一下明天的课程安排"),
+        ("📚 图书馆空座", "帮我看看现在图书馆哪里有空座"),
+        ("🌤️ 校园天气", "今天武大校园的天气怎么样"),
+        ("📈 成绩查询", "帮我查询一下我的期末成绩")
+    ]
+    for idx, (label, query) in enumerate(starters):
+        with button_cols[idx]:
+            if st.button(label, use_container_width=True, key=f"fixed_starter_{idx}", help=f"发送指令: '{query}'"):
+                st.session_state.starter_trigger = query
+                st.rerun()
 
 triggered_input = st.session_state.get("starter_trigger", None)
 if triggered_input:
