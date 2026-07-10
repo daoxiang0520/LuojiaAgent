@@ -59,7 +59,9 @@ def init_session_states():
         "show_setting_modal": False,
         "theme_mode": "day",
         "pending_speech": None,
-        "starter_trigger": None
+        "starter_trigger": None,
+        "agent_running": False,     # 智能体是否正在执行（防止追加输入冲突）
+        "pending_input": None,      # 智能体执行期间用户追加的输入
     }
     for key, value in defaults.items():
         if key not in st.session_state:

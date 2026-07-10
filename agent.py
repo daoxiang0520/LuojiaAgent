@@ -54,7 +54,8 @@ class CampusCookies(TypedDict, total=False):
 # 定义全局状态（State）
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    cookies: CampusCookies  # 用来持久化存储登录成功后的 Cookie 凭证
+    cookies: CampusCookies
+    pending_input: str | None  # 工具执行期间用户追加的输入，等工具跑完再处理
 
 # 注册工具节点
 tool_node = ToolNode(ALL_TOOLS)
@@ -72,6 +73,7 @@ llm = ChatDeepSeek(
     api_key=_load_api_key(),
     api_base="https://api.deepseek.com",
     temperature=0.1,
+    max_tokens=4096,
     reasoning_effort="high",
     extra_body={"thinking": {"type": "enabled"}},
 )
@@ -80,7 +82,24 @@ llm_with_tools = llm.bind_tools(ALL_TOOLS)
 # 定义大模型思考逻辑
 def call_model(state: AgentState):
     messages = state["messages"]
-    
+
+    # 检测上一轮未完成（assistant 发了 tool_calls 但工具还没返回）
+    # → 用户在一个graph执行里面追加了输入，状态里出现了不完整的消息链
+    # → 设置 pending_input 让下次 tool 返回后一起处理
+    last = messages[-1] if messages else None
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        # 找上一个用户消息看看是不是 pending
+        return {"messages": []}  # 空返回，等工具执行
+
+    # 拼装追加输入
+    extra_msgs = []
+    pending = state.get("pending_input")
+    if pending:
+        from langchain_core.messages import HumanMessage
+        extra_msgs.append(HumanMessage(
+            content=f"【追加输入】在工具执行期间，用户补充了以下内容：{pending}。请综合考虑此前工具返回的结果和此追加内容，给出最合适的答复。"
+        ))
+
     is_logged_in = "已登录" if state.get("cookies") else "未登录"
     date_anchor_prompt = get_system_date_prompt()
     
@@ -109,7 +128,8 @@ def call_model(state: AgentState):
     "你要说「这个时段有高数课，你确定要预约吗？要不换个时间？」\n"
     "- 有多条路的时候要帮用户比较。比如「总馆有空位但较远，信息分馆满了但工学分馆有座还近，"
     "建议去工学分馆，走过去5分钟，也不下雨。」\n"
-    "- 工具返回的结果要翻译成人话。别把原始字段直接甩给用户，要整理成自然的建议。\n\n"
+    "- 工具返回的结果要翻译成人话。别把原始字段直接甩给用户，要整理成自然的建议。\n"
+    "- 用户一个问题里包含多个点时，必须逐条回应，不要遗漏任何一个。\n\n"
 
     "【注意】\n"
     "- 课程、成绩、考试、座位等信息必须通过工具获取，绝对不要编造。\n"
@@ -124,9 +144,12 @@ def call_model(state: AgentState):
     "- 结论先行，细节补充。比如先说「建议明天下午去工学分馆」，再解释为什么\n"
     "- 3条以上的信息用简短的要点组织，不要大段文字\n"
     ))
-    full_messages = [system_prompt] + list(messages)
+    full_messages = [system_prompt] + list(messages) + extra_msgs
     response = llm_with_tools.invoke(full_messages)
-    return {"messages": [response]}
+    result = {"messages": extra_msgs + [response]}
+    if pending:
+        result["pending_input"] = None  # 清除，防止下次重复处理
+    return result
 
 # 定义条件路由
 def should_continue(state: AgentState):
@@ -169,8 +192,38 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
             "password": password
         }
     }
+
+    # 检查上一轮是否未完成（assistant 发了 tool_calls 但工具没跑完）
+    last_state = app.get_state(config)
+    if last_state and last_state.values:
+        last_msgs = last_state.values.get("messages", [])
+        if last_msgs:
+            last_msg = last_msgs[-1]
+            if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                # 上一轮还在等工具返回 → 不插入新消息，用 pending_input 暂存
+                print(f"[agent] 检测到未完成的工具调用，暂存输入: {user_input[:30]}...")
+                inputs = {"pending_input": user_input}
+                if cookies:
+                    inputs["cookies"] = cookies
+                for chunk in app.stream(inputs, config=config, stream_mode="updates"):
+                    if not isinstance(chunk, dict):
+                        continue
+                    for node_name, node_output in chunk.items():
+                        if node_name == "tools":
+                            pass
+                        elif node_name == "agent":
+                            if isinstance(node_output, dict):
+                                msgs = node_output.get("messages", [])
+                            else:
+                                msgs = node_output if isinstance(node_output, list) else []
+                            if msgs:
+                                last_m = msgs[-1]
+                                if hasattr(last_m, "content") and not (hasattr(last_m, "tool_calls") and last_m.tool_calls):
+                                    yield {"type": "tool_output", "content": str(last_m.content)}
+                return
+
     inputs = {"messages": [("user", user_input)]}
-    
+
     # 每次运行前，若前端传来了持久化 cookies 凭证，则注入到新会话状态中
     if cookies:
         inputs["cookies"] = cookies
@@ -193,7 +246,12 @@ def run_agent_stream(user_input: str, thread_id: str, student_id: str = "", pass
                         "content": f"📥 工具执行成功，返回结果：\n{last_msg.content}"
                     }
             elif node_name == "agent":
-                messages = node_output.get("messages", [])
+                if isinstance(node_output, dict):
+                    messages = node_output.get("messages", [])
+                elif isinstance(node_output, list):
+                    messages = node_output
+                else:
+                    messages = []
                 if messages:
                     last_msg = messages[-1]
                     if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:

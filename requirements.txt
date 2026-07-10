@@ -1,10 +1,11 @@
-streamlit
+streamlit>=1.28
 langgraph
 langchain-core
-langchain-openai
+langchain-deepseek
 playwright
 requests
 urllib3
 pycryptodomex
 opencv-python
 numpy
+httpx
