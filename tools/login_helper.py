@@ -36,6 +36,7 @@ def interactive_whu_login() -> dict:
         max_wait = 120
         elapsed = 0
         saved_cookies = []
+        castgc_value = ""
 
         while elapsed < max_wait:
             cookies = context.cookies()
@@ -45,6 +46,10 @@ def interactive_whu_login() -> dict:
             if has_castgc:
                 print("\n[OK] CAS 统一身份认证成功！CASTGC 票据已获取。")
                 saved_cookies = context.cookies()
+                # 提取 CASTGC 值（从列表中取出第一个匹配的）
+                _castgc_list = [c['value'] for c in cookies if c['name'] == 'CASTGC']
+                castgc_value = _castgc_list[0] if _castgc_list else ""
+                print(f"[OK] CASTGC: {castgc_value[:30]}...")
                 break
 
             time.sleep(0.5)
@@ -99,29 +104,33 @@ def interactive_whu_login() -> dict:
 
         # ── 加载图书馆 SPA，触发 frontApi 请求以捕获 library_token ──
         hmac_key = ""
+        library_token_val = ""
+        hmac_key = ""
         if jwt_token:
             try:
-                print("[OK] [后台免密流转 2/3] 正在加载图书馆 SPA 页面...")
-                page2.goto(f"https://seat.lib.whu.edu.cn/seat/#/login?token={jwt_token}", timeout=15000)
+                print("[OK] [后台免密流转 2/3] 等待 SPA 完成 CAS 认证...")
+                # OAuth 重定向已停在 SPA + JWT，不能再 goto（JWT 一次性）
                 page2.wait_for_load_state("networkidle", timeout=15000)
 
-                # 等待 frontApi 请求被拦截
-                for _ in range(50):
-                    if captured_credentials["token"] and captured_credentials["hmac"]:
+                # 从 sessionStorage 直接读 token（key 前缀 jsq_p-）
+                for _ in range(80):
+                    library_token_val = page2.evaluate("() => sessionStorage.getItem('jsq_p-token')")
+                    if library_token_val:
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.15)
 
-                # 从 sessionStorage 提取 HMAC 密钥
+                # 从 sessionStorage 读 hmac_key
                 raw = page2.evaluate("() => sessionStorage.getItem('jsq_p-systemInfo')")
                 if raw:
                     try:
                         hmac_key = json.loads(raw).get("hmacKey", "")
-                        print(f"[OK] HMAC 密钥提取{'成功' if hmac_key else '失败'}")
                     except:
                         hmac_key = ""
-                        print("[WARN] HMAC 密钥解析异常")
+
+                print(f"[OK] library_token: {'OK' if library_token_val else 'FAIL'}, "
+                      f"hmac_key: {'OK' if hmac_key else 'FAIL'}")
             except Exception as e:
-                print(f"[WARN] 图书馆 SPA 加载异常: {e}")
+                print(f"[WARN] 图书馆 SPA 提取异常: {e}")
 
         # -------------------- 步骤 4：访问教务系统收割 Cookie --------------------
         print("[OK] [后台免密流转 3/3] 正在访问教务系统获取 Cookie...")
@@ -149,9 +158,10 @@ def interactive_whu_login() -> dict:
             print(f"   当前教务 Cookie 内容: {jwgl_cookie_str}")
         else:
             print("\n✅ [成功] 教务系统 4 个核心 Cookie 已全部收割！")
-
+        print(captured_credentials)
         return {
             "cookie_str": "",  # 不再依赖 zhlj PORTAL-TOKEN，CAS CASTGC 已覆盖
+            "castgc": castgc_value,
             "jwgl_cookie_str": jwgl_cookie_str,
             "library_token": captured_credentials["token"],
             "library_jwt_token": jwt_token,
@@ -173,15 +183,17 @@ def login_to_whu_portal(tool_call_id: Annotated[str, InjectedToolCallId]) -> Com
         payload = interactive_whu_login()
         cookies_dict = {
             "zhlj": payload.get("cookie_str", ""),
+            "castgc": payload.get("castgc", ""),
             "educational": payload.get("jwgl_cookie_str", ""),
             "library_cookie": payload.get("raw_cookies", []),
             "library_token": payload.get("library_token", ""),
             "library_jwt_token": payload.get("library_jwt_token", ""),
             "library_hmac": payload.get("library_hmac", ""),
+            "library_hmac_key": payload.get("library_hmac_key", ""),
             "library_request_date": payload.get("library_request_date", ""),
             "library_request_id": payload.get("library_request_id", ""),
-            "library_hmac_key": payload.get("library_hmac_key", ""),
         }
+        print(cookies_dict)
         return Command(
             update={
                 "cookies": cookies_dict,

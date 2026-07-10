@@ -41,11 +41,13 @@ from tools import ALL_TOOLS
 
 class CampusCookies(TypedDict, total=False):
     zhlj: str
+    castgc: str              # CAS CASTGC 票据 — 免密 SSO 到所有子站的万能钥匙
     educational: str
-    library_cookie: list  # 接收 raw_cookies
+    library_cookie: list     # 接收 raw_cookies（含 CASTGC，供 Playwright 浏览器注入）
     library_token: str
     library_jwt_token: str
     library_hmac: str
+    library_hmac_key: str    # HMAC 签名密钥（从 sessionStorage 提取，可纯 Python 生成签名）
     library_request_date: str
     library_request_id: str
 

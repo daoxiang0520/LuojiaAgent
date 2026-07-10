@@ -9,6 +9,8 @@ from .library_tool import query_empty_seats_in_area
 from .library_tool import reserve_library_seat
 from .library_tool import query_user_reservations
 from .library_tool import cancel_library_reservation
+from .library_tool import get_current_usage
+from .library_tool import stop_library_usage
 from .weather_tool import get_whu_rain_forecast
 from .grades_tool import query_whu_grades_realtime
 from .exam_tool import query_whu_exam_schedule
@@ -24,9 +26,9 @@ ALL_TOOLS = [
     reserve_library_seat,
     query_user_reservations,
     cancel_library_reservation,
-    query_whu_exam_schedule
-
-
+    get_current_usage,
+    stop_library_usage,
+    query_whu_exam_schedule,
 ]
 # 3. 暴露给外部
 __all__ = ["ALL_TOOLS"]
