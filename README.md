@@ -9,25 +9,85 @@
 - **三层 fallback** — 缓存优先 → 过期自动刷新 → 友好报错
 - **自动收割** — 登录后自动获取图书馆 token + 教务 Cookie
 - **主动规划** — LLM 会查课表、天气、座位后综合建议
+- **开箱即用** — 首次启动自动检测并安装 Playwright、配置 API Key
 
 ## 快速开始
 
-```bash
-# 一键安装
+### Windows
+
+**方式一：一键脚本**
+
+```powershell
 git clone https://github.com/daoxiang0520/LuojiaAgent.git
-cd LuojiaAgent
-bash setup.sh
-
-# 或 pip
-pip install git+https://github.com/daoxiang0520/LuojiaAgent.git
-
-# 启动
-streamlit run app.py
+cd LuojiaAgent\LuojiaAgent_proxy
+install.bat         # 安装依赖 + Playwright + 配置 API Key
+run.bat             # 启动
 ```
 
-### Docker
+**方式二：手动**
+
+```powershell
+git clone https://github.com/daoxiang0520/LuojiaAgent.git
+cd LuojiaAgent\LuojiaAgent_proxy
+
+# 创建虚拟环境（推荐）
+python -m venv .venv
+.venv\Scripts\activate
+
+pip install .       # 安装依赖 + 注册 luojia 命令
+luojia              # 启动（首次运行自动引导配置）
+```
+
+访问 `http://localhost:8501`
+
+### Linux / WSL / macOS
 
 ```bash
+git clone https://github.com/daoxiang0520/LuojiaAgent.git
+cd LuojiaAgent/LuojiaAgent_proxy
+
+python3 -m venv .venv && source .venv/bin/activate
+pip install .
+luojia
+```
+
+访问 `http://localhost:8501`
+
+### 首次运行自动引导
+
+`luojia` 会在启动时自动检测并处理：
+
+| 检查项 | Windows | Linux / macOS |
+|:---|:---|:---|
+| **API Key** | 交互输入 → 保存 `api.key` | 同左（也支持 `DEEPSEEK_API_KEY` 环境变量） |
+| **Playwright 浏览器** | 自动下载 Chromium (~150 MB) | 同左 |
+| **Playwright 系统依赖** | 不需要 | Linux 自动 `sudo install-deps`，失败则打印手动命令；macOS 通常不需要 |
+
+### 手动预配置（可选，跳过自动引导）
+
+**Windows (PowerShell):**
+```powershell
+echo "sk-xxxx" > api.key
+python -m playwright install chromium
+```
+
+**Linux:**
+```bash
+echo "sk-xxxx" > api.key
+python -m playwright install chromium
+sudo python -m playwright install-deps chromium
+```
+
+**macOS:**
+```bash
+echo "sk-xxxx" > api.key
+python -m playwright install chromium
+```
+
+### Docker (全平台通用)
+
+```bash
+export DEEPSEEK_API_KEY="sk-xxxx"
 docker compose up -d
 ```
 
@@ -72,25 +132,28 @@ Streamlit 前端 ←→ LangGraph Agent (DeepSeek V4 Pro + 深度思考)
 ## 项目结构
 
 ```
-LuojiaAgent/
-├── agent.py              # LangGraph 智能体
-├── app.py                # Streamlit 前端
-├── pyproject.toml        # pip 安装配置
-├── setup.sh              # 一键安装脚本
+LuojiaAgent_proxy/
+├── app.py                 # Streamlit 前端
+├── agent.py               # LangGraph 智能体
+├── cli.py                 # 启动入口 (luojia 命令) + 首次运行引导
+├── cas_login.py           # CAS HTTP 多种登录
+├── cas_encrypt.py         # 密码 AES 加密
+├── cas_proxy.py           # CAS 代理服务 (Flask)
+├── pyproject.toml         # pip 安装配置
+├── setup.sh               # 一键安装脚本
 ├── Dockerfile
 ├── docker-compose.yml
-├── cas_login.py          # CAS HTTP 多种登录
-├── cas_encrypt.py        # 密码 AES 加密
+├── api.key                # DeepSeek API Key (gitignore)
 └── tools/
     ├── __init__.py
-    ├── login_helper.py   # CASTGC 收割图书馆+教务
-    ├── library_tool.py   # 图书馆全套（HMAC+验证码+CAS SSO）
-    ├── courses_tool.py   # 课表
-    ├── grades_tool.py    # 成绩
-    ├── exam_tool.py      # 考试
-    ├── weather_tool.py   # 天气
-    ├── captcha_solver.py # TAC 验证码破解
-    └── captcha_refs.npz  # 参考图库
+    ├── login_helper.py    # CASTGC 收割图书馆+教务
+    ├── library_tool.py    # 图书馆全套（HMAC+验证码+CAS SSO）
+    ├── courses_tool.py    # 课表
+    ├── grades_tool.py     # 成绩
+    ├── exam_tool.py       # 考试
+    ├── weather_tool.py    # 天气
+    ├── captcha_solver.py  # TAC 验证码破解
+    └── captcha_refs.npz   # 参考图库
 ```
 
 ## 图书馆 API 技术细节
@@ -129,15 +192,10 @@ signature = HMAC-SHA256(sign_str, decrypted_hmacKey).hex()
 
 图书馆 API 逆向分析详见 [whu-lib-api](https://github.com/daoxiang0520/whu-lib-api)。
 
-## 部署
+## 服务器部署
 
 ```bash
-# pip 安装
-pip install git+https://github.com/daoxiang0520/LuojiaAgent.git
-
-# GitHub Release
-git tag v2.0.0 && git push --tags  # Actions 自动构建
-
+luojia --server.address=0.0.0.0 --server.port=8501
 ```
 
 ## License

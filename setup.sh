@@ -4,8 +4,8 @@ set -e
 
 echo "=== LuojiaAgent 安装 ==="
 
-# Python 依赖
-pip install -r requirements.txt
+# 安装 LuojiaAgent + 所有依赖
+pip install .
 
 # Playwright 浏览器
 python -m playwright install chromium

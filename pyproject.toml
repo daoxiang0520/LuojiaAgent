@@ -28,5 +28,11 @@ dev = [
     "langchain-openai",
 ]
 
+[project.scripts]
+luojia = "cli:main"
+
 [tool.setuptools]
-py-modules = []
+py-modules = ["app", "agent", "cli", "cas_encrypt", "cas_login", "cas_proxy"]
+
+[tool.setuptools.packages.find]
+include = ["tools*"]
