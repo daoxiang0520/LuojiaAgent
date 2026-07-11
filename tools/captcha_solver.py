@@ -144,29 +144,78 @@ class CaptchaSolver:
         return g
 
     def _generate_tracks(self, distance: int):
-        """生成人类滑动轨迹"""
+        """生成人类滑动轨迹 — 模拟真实手指拖拽的微抖动、过冲修正、末端停顿"""
         tracks = [{"x": 0, "y": 0, "type": "down", "t": 0}]
-        cur = 0.0
-        mid = distance * random.uniform(0.7, 0.85)
-        v = 0.0
-        dt = 0.1
         rec_start = int(time.time() * 1000)
-        while cur < distance:
-            a = random.uniform(1.5, 3.5) if cur < mid else random.uniform(-5.0, -2.0)
-            v = max(0.05, v + a * dt)
-            cur += v * dt
-            tracks.append(
-                {
-                    "x": int(min(cur, distance)),
-                    "y": random.choice([-1, 0, 0, 0, 1]),
-                    "type": "move",
-                    "t": int(time.time() * 1000) - rec_start,
-                }
-            )
-            time.sleep(random.uniform(0.01, 0.03))
-        total = int(time.time() * 1000) - rec_start
+        t = 0
+        cur_x = 0.0
+        cur_y = 0.0
+
+        # 1. 起步停顿（手指按下后反应时间）
+        t += random.randint(80, 200)
+
+        # 2. 快速起步段 (0 → ~10% distance)
+        boost_end = distance * random.uniform(0.06, 0.12)
+        while cur_x < boost_end:
+            dt = random.randint(8, 20)
+            cur_x += random.uniform(1.5, 4.0)
+            cur_y += random.uniform(-0.8, 0.8)
+            t += dt
+            tracks.append({
+                "x": int(min(cur_x, distance)),
+                "y": int(cur_y),
+                "type": "move",
+                "t": t,
+            })
+
+        # 3. 中段加速 + 微抖动（手指不稳定）
+        mid = distance * random.uniform(0.72, 0.88)
+        while cur_x < mid:
+            dt = random.randint(5, 16)
+            step = random.uniform(2.0, 5.5)
+            # 微抖动：每步加高频噪声
+            cur_x += step + random.uniform(-1.0, 1.0)
+            cur_y += random.uniform(-1.5, 1.5)
+            t += dt
+            tracks.append({
+                "x": int(min(cur_x, distance)),
+                "y": int(cur_y),
+                "type": "move",
+                "t": t,
+            })
+
+        # 4. 过冲修正段（超过目标 ~2-6px，再退回）
+        overshoot = distance + random.randint(2, 6)
+        while cur_x < overshoot:
+            dt = random.randint(8, 18)
+            cur_x += random.uniform(0.5, 2.0)
+            cur_y += random.uniform(-1.0, 1.0)
+            t += dt
+            tracks.append({
+                "x": int(min(cur_x, overshoot)),
+                "y": int(cur_y),
+                "type": "move",
+                "t": t,
+            })
+
+        # 退回目标位置
+        t += random.randint(30, 60)
+        cur_x = distance
+        cur_y = 0
+        tracks.append({
+            "x": distance,
+            "y": 0,
+            "type": "move",
+            "t": t,
+        })
+
+        # 5. 末端停顿（手指停在目标位置确认，然后松开）
+        t += random.randint(50, 150)
+
+        total = t
         if total < 800:
             total = 800 + random.randint(100, 600)
+
         tracks.append({"x": distance, "y": 0, "type": "up", "t": total})
 
         st_dt = datetime.fromtimestamp(rec_start / 1000, timezone.utc)
