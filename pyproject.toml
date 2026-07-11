@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luojia-agent"
+version = "2.0.0"
+description = "武大校园智能助手 — LangGraph + DeepSeek V4 Pro，覆盖课表/成绩/图书馆/天气"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.28",
+    "langgraph",
+    "langchain-core",
+    "langchain-deepseek",
+    "playwright",
+    "requests",
+    "urllib3",
+    "pycryptodomex",
+    "opencv-python",
+    "numpy",
+    "flask",
+    "beautifulsoup4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "langchain-openai",
+]
+
+[tool.setuptools]
+py-modules = []
